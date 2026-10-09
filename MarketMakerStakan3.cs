@@ -379,32 +379,19 @@ namespace OsEngine.Robots.MarketMaker
                 return;
             }
 
-            
-            
-            decimal netVolume = GetNetPositionVolume();
-            if (netVolume < 0 && -netVolume >= totalSellVolume)
+            // Доступно для продажи = бумаги в портфеле − уже зарезервировано под активные sell-заявки
+            decimal reservedSell = GetReservedSellVolume();
+            decimal availableSell = totalSellVolume - reservedSell;
+
+            if (availableSell <= 0)
             {
-                SendNewLogMessage("Позиция уже в шорте больше объёма продажи — продажи пропускаем", LogMessageType.Trade);
                 return;
             }
 
-            
+            decimal rest = availableSell;
+
             List<decimal> foreignVolumes = GetForeignVolumes(marketDepth.Asks, Side.Sell);
 
-            
-            decimal reservedSell = GetReservedSellVolume();
-
-            if (reservedSell >= totalSellVolume)
-            {
-                
-                return;
-            }
-
-            totalSellVolume -= reservedSell;
-
-            decimal rest = totalSellVolume;
-
-            
             for (int i = 0; i < marketDepth.Asks.Count && rest > 0; i++)
             {
                 decimal want = _levelVolumePercent.ValueDecimal / 100m * foreignVolumes[i];
