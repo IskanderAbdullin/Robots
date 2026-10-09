@@ -379,16 +379,10 @@ namespace OsEngine.Robots.MarketMaker
                 return;
             }
 
-            // Доступно для продажи = бумаги в портфеле − уже зарезервировано под активные sell-заявки
-            decimal reservedSell = GetReservedSellVolume();
-            decimal availableSell = totalSellVolume - reservedSell;
-
-            if (availableSell <= 0)
-            {
-                return;
-            }
-
-            decimal rest = availableSell;
+            // План описывает итоговое желаемое состояние: весь доступный объём из портфеля.
+            // Уже стоящие заявки покрываются сверкой в ApplyPlan, их объём из плана не вычитаем —
+            // иначе стоящая заявка каждый тик «не совпадает с планом» и снимается.
+            decimal rest = totalSellVolume;
 
             List<decimal> foreignVolumes = GetForeignVolumes(marketDepth.Asks, Side.Sell);
 
@@ -498,9 +492,6 @@ namespace OsEngine.Robots.MarketMaker
             
             moneyForBuy = GetFreeMoney(portfolio);
 
-            
-            moneyForBuy -= GetReservedBuyMoney(bestBid);
-
             if (moneyForBuy <= 0)
             {
                 return 0;
@@ -519,30 +510,6 @@ namespace OsEngine.Robots.MarketMaker
         private decimal GetPortfolioValue(Portfolio portfolio)
         {
             return portfolio.ValueCurrent;
-        }
-
-        
-        
-        private decimal GetReservedBuyMoney(decimal price)
-        {
-            if (price <= 0)
-            {
-                return 0;
-            }
-
-            decimal reserved = 0;
-
-            List<Order> myActiveOrders = GetMyActiveOrders();
-
-            for (int i = 0; i < myActiveOrders.Count; i++)
-            {
-                if (myActiveOrders[i].Side == Side.Buy)
-                {
-                    reserved += (myActiveOrders[i].Volume - myActiveOrders[i].VolumeExecute) * price;
-                }
-            }
-
-            return reserved;
         }
 
         
@@ -626,25 +593,6 @@ namespace OsEngine.Robots.MarketMaker
 
                 return moneyForSell / bestAsk;
             }
-        }
-
-        
-        
-        private decimal GetReservedSellVolume()
-        {
-            decimal reserved = 0;
-
-            List<Order> myActiveOrders = GetMyActiveOrders();
-
-            for (int i = 0; i < myActiveOrders.Count; i++)
-            {
-                if (myActiveOrders[i].Side == Side.Sell)
-                {
-                    reserved += myActiveOrders[i].Volume - myActiveOrders[i].VolumeExecute;
-                }
-            }
-
-            return reserved;
         }
 
         
