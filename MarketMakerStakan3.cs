@@ -49,6 +49,12 @@ namespace OsEngine.Robots.MarketMaker
         
         private StrategyParameterDecimal _sellPercent;
 
+        private StrategyParameterDecimal _wallMinVolume;
+
+        private StrategyParameterDecimal _wallMedianFactor;
+
+        private bool _wallNotFoundLogged;
+
         public MarketMakerStakan3(string name, StartProgram startProgram) : base(name, startProgram)
         {
             
@@ -76,7 +82,7 @@ namespace OsEngine.Robots.MarketMaker
 
             
             _regime = CreateParameter("Режим", "Off", new[] { "Off", "On" });
-            _buyMode = CreateParameter("Режим покупки", "Распределение сверху вниз", new[] { "Один уровень (макс. объём)", "Распределение сверху вниз" });
+            _buyMode = CreateParameter("Режим покупки", "Распределение сверху вниз", new[] { "Один уровень (макс. объём)", "Распределение сверху вниз", "Перед большой заявкой" });
             
             
             
@@ -88,6 +94,8 @@ namespace OsEngine.Robots.MarketMaker
             _levelVolumePercent = CreateParameter("Процент от объёма уровня", 100.0m, 1.0m, 1000.0m, 1.0m);
             _sellVolumeMode = CreateParameter("Режим объёма продажи", "% от бумаг в портфеле", new[] { "% от бумаг в портфеле", "% от всего портфеля" });
             _sellPercent = CreateParameter("Процент продажи", 100.0m, 1.0m, 100.0m, 1.0m);
+            _wallMinVolume = CreateParameter("Мин. объём стены", 100000.0m, 0.0m, 100000000.0m, 1.0m);
+            _wallMedianFactor = CreateParameter("Превышение над медианой, раз", 3.0m, 0.0m, 1000.0m, 0.1m);
 
             
             _tab.MarketDepthUpdateEvent += MarketDepthUpdateHandler;
@@ -330,6 +338,10 @@ namespace OsEngine.Robots.MarketMaker
                     plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
                 }
             }
+            else if (_buyMode.ValueString == "Перед большой заявкой")
+            {
+                BuildWallBuyPlan(marketDepth, plan, totalBuyVolume, foreignVolumes);
+            }
             else
             {
                 
@@ -369,6 +381,100 @@ namespace OsEngine.Robots.MarketMaker
         }
 
         
+        // Режим «Перед большой заявкой»: одна заявка на покупку на 1 шаг ВЫШЕ крупной заявки (стены).
+        private void BuildWallBuyPlan(MarketDepth marketDepth, List<PlanOrder> plan, decimal totalBuyVolume, List<decimal> foreignVolumes)
+        {
+            if (_tab.Security == null || _tab.Security.VolumeStep <= 0)
+            {
+                return;
+            }
+
+            decimal wallPrice = FindWallPrice(foreignVolumes, marketDepth);
+
+            if (wallPrice <= 0)
+            {
+                if (!_wallNotFoundLogged)
+                {
+                    _wallNotFoundLogged = true;
+                    SendNewLogMessage("Режим \"Перед большой заявкой\": стена не найдена", LogMessageType.Trade);
+                }
+
+                return;
+            }
+
+            _wallNotFoundLogged = false;
+
+            if (marketDepth.Asks == null || marketDepth.Asks.Count == 0)
+            {
+                return;
+            }
+
+            decimal bestAsk = Convert.ToDecimal(marketDepth.Asks[0].Price);
+            decimal price = RoundPrice(wallPrice + _tab.Security.PriceStep, Side.Buy);
+
+            // Нельзя пересекать спред
+            if (price <= 0 || price >= bestAsk)
+            {
+                return;
+            }
+
+            decimal volume = RoundVolume(totalBuyVolume);
+
+            if (volume > 0)
+            {
+                plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
+            }
+        }
+
+        // Поиск стены: первый уровень Bids, объём которого >= мин. объёма стены и >= множитель × медиана объёмов.
+        private decimal FindWallPrice(List<decimal> foreignVolumes, MarketDepth marketDepth)
+        {
+            if (marketDepth.Bids == null || marketDepth.Bids.Count < 2)
+            {
+                return 0;
+            }
+
+            decimal median = MedianVolumes(foreignVolumes);
+
+            if (median <= 0)
+            {
+                return 0;
+            }
+
+            for (int i = 0; i < foreignVolumes.Count; i++)
+            {
+                decimal volume = foreignVolumes[i];
+
+                if (volume >= _wallMinVolume.ValueDecimal &&
+                    volume >= _wallMedianFactor.ValueDecimal * median)
+                {
+                    return Convert.ToDecimal(marketDepth.Bids[i].Price);
+                }
+            }
+
+            return 0;
+        }
+
+        private decimal MedianVolumes(List<decimal> volumes)
+        {
+            if (volumes == null || volumes.Count < 2)
+            {
+                return 0;
+            }
+
+            List<decimal> sorted = new List<decimal>(volumes);
+            sorted.Sort();
+
+            int count = sorted.Count;
+
+            if (count % 2 == 1)
+            {
+                return sorted[count / 2];
+            }
+
+            return (sorted[count / 2 - 1] + sorted[count / 2]) / 2m;
+        }
+
         private void BuildSellPlan(MarketDepth marketDepth, List<PlanOrder> plan)
         {
             
