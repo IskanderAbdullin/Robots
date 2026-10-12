@@ -1,5 +1,3 @@
-
-
 using OsEngine.Entity;
 using OsEngine.Logging;
 using OsEngine.OsTrader.Panels;
@@ -11,84 +9,58 @@ using System.Collections.Generic;
 
 namespace OsEngine.Robots.MarketMaker
 {
-    
     [Bot("MarketMakerStakan3")]
     public class MarketMakerStakan3 : BotPanel
     {
-        
         private BotTabSimple _tab;
 
-        
-
-        
         private StrategyParameterString _regime;
-
-        
-        
         private StrategyParameterString _buyMode;
-
-        
-        
-        
         private StrategyParameterDecimal _buyTotalVolume;
-
-        
-        
-        
-        
         private StrategyParameterString _buyVolumeMode;
-
-        
-        
         private StrategyParameterDecimal _levelVolumePercent;
-
-        
-        
         private StrategyParameterString _sellVolumeMode;
-
-        
         private StrategyParameterDecimal _sellPercent;
-
         private StrategyParameterDecimal _wallMinVolume;
-
         private StrategyParameterDecimal _wallMedianFactor;
+        private StrategyParameterInt _wallConfirmTicks;
 
         private bool _wallNotFoundLogged;
+        private decimal _wallCandidatePrice;
+        private int _wallCandidateCount;
+
+        private bool _ordersClearedInOffMode = false;
+
+        private readonly Dictionary<int, DateTime> _ordersOnCancel = new Dictionary<int, DateTime>();
+        private static readonly TimeSpan CancelRetryTimeout = TimeSpan.FromSeconds(60);
+
+        private class PendingPriceChange
+        {
+            public decimal TargetPrice;
+            public DateTime Time;
+        }
+
+        private readonly Dictionary<int, PendingPriceChange> _ordersOnPriceChange = new Dictionary<int, PendingPriceChange>();
+
+        private readonly object _planLock = new object();
+
+        private DateTime _lastProcessTime = DateTime.MinValue;
+        private static readonly TimeSpan MinProcessInterval = TimeSpan.FromMilliseconds(100);
+
+        private DateTime _lastPortfolioErrorLog = DateTime.MinValue;
+        private static readonly TimeSpan PortfolioErrorLogInterval = TimeSpan.FromSeconds(60);
 
         public MarketMakerStakan3(string name, StartProgram startProgram) : base(name, startProgram)
         {
-            
             TabCreate(BotTabType.Simple);
             _tab = TabsSimple[0];
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            _tab.ManualPositionSupport.SecondToOpenIsOn = false;   
-            _tab.ManualPositionSupport.SecondToCloseIsOn = false;  
-            _tab.ManualPositionSupport.SetbackToOpenIsOn = false;  
-            _tab.ManualPositionSupport.SetbackToCloseIsOn = false; 
-            _tab.ManualPositionSupport.StopIsOn = false;           
-            _tab.ManualPositionSupport.ProfitIsOn = false;         
-            _tab.ManualPositionSupport.DoubleExitIsOn = false;     
-            _tab.ManualPositionSupport.OrderTypeTime = OrderTypeTime.GTC; 
-            _tab.ManualPositionSupport.Save();                     
+            _tab.ManualPositionSupport.DisableManualSupport();
+            _tab.ManualPositionSupport.OrderTypeTime = OrderTypeTime.GTC;
+            _tab.ManualPositionSupport.Save();
 
-            
             _regime = CreateParameter("Режим", "Off", new[] { "Off", "On" });
             _buyMode = CreateParameter("Режим покупки", "Распределение сверху вниз", new[] { "Один уровень (макс. объём)", "Распределение сверху вниз", "Перед большой заявкой" });
-            
-            
-            
-            
-            
-            
             _buyTotalVolume = CreateParameter("Суммарный объём покупки (лоты или % портфеля)", 100.0m, 0.0001m, 100000.0m, 0.0001m);
             _buyVolumeMode = CreateParameter("Режим объёма покупки", "% от стоимости портфеля", new[] { "Фиксированный", "% от стоимости портфеля", "Максимум без маржи" });
             _levelVolumePercent = CreateParameter("Процент от объёма уровня", 100.0m, 1.0m, 1000.0m, 1.0m);
@@ -96,78 +68,79 @@ namespace OsEngine.Robots.MarketMaker
             _sellPercent = CreateParameter("Процент продажи", 100.0m, 1.0m, 100.0m, 1.0m);
             _wallMinVolume = CreateParameter("Мин. объём стены", 100000.0m, 0.0m, 100000000.0m, 1.0m);
             _wallMedianFactor = CreateParameter("Превышение над медианой, раз", 3.0m, 0.0m, 1000.0m, 0.1m);
+            _wallConfirmTicks = CreateParameter("Подтверждение стены, тиков", 3, 1, 20, 1);
 
-            
-            _tab.MarketDepthUpdateEvent += MarketDepthUpdateHandler;
-
-            
-            
-            _tab.OrderUpdateEvent += OrderUpdateHandler;
+            _tab.MarketDepthUpdateEvent += _tab_MarketDepthUpdateEvent;
+            _tab.OrderUpdateEvent += _tab_OrderUpdateEvent;
+            DeleteEvent += MarketMakerStakan3_DeleteEvent;
         }
 
-        
         public override string GetNameStrategyType()
         {
             return "MarketMakerStakan3";
         }
 
-        
         public override void ShowIndividualSettingsDialog()
         {
         }
 
-        
-
-        
-        private class PlanOrder
+        private void MarketMakerStakan3_DeleteEvent()
         {
-            public Side Side;      
-            public decimal Price;  
-            public decimal Volume; 
+            _tab.MarketDepthUpdateEvent -= _tab_MarketDepthUpdateEvent;
+            _tab.OrderUpdateEvent -= _tab_OrderUpdateEvent;
         }
 
-        
-        private bool _ordersClearedInOffMode = false;
+        private class PlanOrder
+        {
+            public Side Side;
+            public decimal Price;
+            public decimal Volume;
+        }
 
-        
-        
-        
-        private readonly List<int> _ordersOnCancel = new List<int>();
-
-        
-        private readonly object _planLock = new object();
-
-        
-        private void MarketDepthUpdateHandler(MarketDepth marketDepth)
+        private void _tab_MarketDepthUpdateEvent(MarketDepth marketDepth)
         {
             try
             {
+                if (StartProgram == StartProgram.IsOsOptimizer)
+                {
+                    return;
+                }
+
                 lock (_planLock)
                 {
-                    
                     if (_regime.ValueString == "Off")
                     {
-                        if (!_ordersClearedInOffMode)
-                        {
-                            CancelAllActiveOrders();
-                            _ordersClearedInOffMode = true;
-                        }
+                        CancelAllActiveOrders(!_ordersClearedInOffMode);
+                        _ordersClearedInOffMode = true;
                         return;
                     }
 
                     _ordersClearedInOffMode = false;
 
-                    
-                    if (marketDepth == null ||
-                        marketDepth.Asks == null || marketDepth.Asks.Count == 0 ||
-                        marketDepth.Bids == null || marketDepth.Bids.Count == 0)
+                    if (StartProgram == StartProgram.IsOsTrader &&
+                        _lastProcessTime + MinProcessInterval > DateTime.Now)
                     {
-                        return; 
+                        return;
+                    }
+
+                    _lastProcessTime = DateTime.Now;
+
+                    if (marketDepth == null)
+                    {
+                        return;
+                    }
+
+                    MarketDepth md = marketDepth.GetCopy();
+
+                    if (md.Asks == null || md.Asks.Count == 0 ||
+                        md.Bids == null || md.Bids.Count == 0)
+                    {
+                        return;
                     }
 
                     if (_tab.Security == null)
                     {
-                        return; 
+                        return;
                     }
 
                     if (_tab.Security.VolumeStep <= 0)
@@ -176,26 +149,15 @@ namespace OsEngine.Robots.MarketMaker
                         return;
                     }
 
-                    
-                    List<PlanOrder> newPlan = BuildPlan(marketDepth);
-
-                    
-                    
-                    
-                    
-                    
                     List<Order> activeOrders = GetMyActiveOrders();
+                    List<PlanOrder> newPlan = BuildPlan(md, activeOrders);
 
-                    
-                    
-                    
                     if (OrdersMatchPlan(activeOrders, newPlan))
                     {
                         return;
                     }
 
-                    
-                    ApplyPlan(newPlan, activeOrders, marketDepth);
+                    ApplyPlan(newPlan, activeOrders, md);
                 }
             }
             catch (Exception e)
@@ -204,12 +166,7 @@ namespace OsEngine.Robots.MarketMaker
             }
         }
 
-        
-        
-        
-        
-        
-        private void OrderUpdateHandler(Order order)
+        private void _tab_OrderUpdateEvent(Order order)
         {
             if (order == null)
             {
@@ -218,18 +175,25 @@ namespace OsEngine.Robots.MarketMaker
 
             lock (_planLock)
             {
-                
-                
                 if (order.State == OrderStateType.Cancel ||
                     order.State == OrderStateType.Done ||
                     order.State == OrderStateType.Fail)
                 {
                     _ordersOnCancel.Remove(order.NumberUser);
+                    _ordersOnPriceChange.Remove(order.NumberUser);
+                }
+                else
+                {
+                    PendingPriceChange pending;
+
+                    if (_ordersOnPriceChange.TryGetValue(order.NumberUser, out pending) &&
+                        order.Price == pending.TargetPrice)
+                    {
+                        _ordersOnPriceChange.Remove(order.NumberUser);
+                    }
                 }
             }
 
-            
-            
             if (order.State == OrderStateType.Fail)
             {
                 SendNewLogMessage("Заявка " + order.Side + " " + order.Price +
@@ -238,12 +202,6 @@ namespace OsEngine.Robots.MarketMaker
             }
         }
 
-        
-        
-        
-        
-        
-        
         private void CancelOrderSafe(Order order)
         {
             if (order == null)
@@ -253,66 +211,56 @@ namespace OsEngine.Robots.MarketMaker
 
             lock (_planLock)
             {
-                
-                
                 if (order.State != OrderStateType.Active &&
                     order.State != OrderStateType.Partial &&
                     order.State != OrderStateType.Pending)
                 {
-                    
-                    
                     return;
                 }
 
-                
-                
-                if (_ordersOnCancel.Contains(order.NumberUser))
+                DateTime cancelTime;
+
+                if (_ordersOnCancel.TryGetValue(order.NumberUser, out cancelTime) &&
+                    cancelTime + CancelRetryTimeout > DateTime.Now)
                 {
                     return;
                 }
 
-                
-                _ordersOnCancel.Add(order.NumberUser);
-
+                _ordersOnCancel[order.NumberUser] = DateTime.Now;
                 _tab.CloseOrder(order);
             }
         }
 
-        
-
-        
-        private List<PlanOrder> BuildPlan(MarketDepth marketDepth)
+        private List<PlanOrder> BuildPlan(MarketDepth md, List<Order> activeOrders)
         {
             List<PlanOrder> plan = new List<PlanOrder>();
 
-            
-            BuildBuyPlan(marketDepth, plan);
-
-            
-            BuildSellPlan(marketDepth, plan);
+            BuildBuyPlan(md, plan, activeOrders);
+            BuildSellPlan(md, plan);
 
             return plan;
         }
 
-        
-        private void BuildBuyPlan(MarketDepth marketDepth, List<PlanOrder> plan)
+        private void BuildBuyPlan(MarketDepth md, List<PlanOrder> plan, List<Order> activeOrders)
         {
-            
-            
-            decimal totalBuyVolume = GetBuyTotalVolume(marketDepth);
+            if (_buyMode.ValueString != "Перед большой заявкой")
+            {
+                _wallCandidatePrice = 0;
+                _wallCandidateCount = 0;
+                _wallNotFoundLogged = false;
+            }
+
+            decimal totalBuyVolume = GetBuyTotalVolume(md);
 
             if (totalBuyVolume <= 0)
             {
-                return; 
+                return;
             }
 
-            
-            
-            List<decimal> foreignVolumes = GetForeignVolumes(marketDepth.Bids, Side.Buy);
+            List<decimal> foreignVolumes = GetForeignVolumes(md.Bids, Side.Buy, activeOrders);
 
             if (_buyMode.ValueString == "Один уровень (макс. объём)")
             {
-                
                 int bestIndex = -1;
                 decimal bestVolume = -1m;
 
@@ -327,10 +275,10 @@ namespace OsEngine.Robots.MarketMaker
 
                 if (bestIndex < 0)
                 {
-                    return; 
+                    return;
                 }
 
-                decimal price = RoundPrice(Convert.ToDecimal(marketDepth.Bids[bestIndex].Price), Side.Buy);
+                decimal price = RoundPrice(Convert.ToDecimal(md.Bids[bestIndex].Price), Side.Buy);
                 decimal volume = RoundVolume(totalBuyVolume);
 
                 if (price > 0 && volume > 0)
@@ -340,24 +288,22 @@ namespace OsEngine.Robots.MarketMaker
             }
             else if (_buyMode.ValueString == "Перед большой заявкой")
             {
-                BuildWallBuyPlan(marketDepth, plan, totalBuyVolume, foreignVolumes);
+                BuildWallBuyPlan(md, plan, totalBuyVolume, foreignVolumes);
             }
             else
             {
-                // Распределение сверху вниз: цели по текущему стакану,
-                // сверка с сохранением правильного префикса — в ApplyPlan.
                 decimal rest = totalBuyVolume;
 
-                for (int i = 0; i < marketDepth.Bids.Count && rest > 0; i++)
+                for (int i = 0; i < md.Bids.Count && rest > 0; i++)
                 {
-                    decimal price = RoundPrice(Convert.ToDecimal(marketDepth.Bids[i].Price), Side.Buy);
+                    decimal price = RoundPrice(Convert.ToDecimal(md.Bids[i].Price), Side.Buy);
 
                     if (price <= 0)
                     {
                         continue;
                     }
 
-                    decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(marketDepth.Bids[i].Bid);
+                    decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(md.Bids[i].Bid);
 
                     if (want > rest)
                     {
@@ -377,19 +323,15 @@ namespace OsEngine.Robots.MarketMaker
             }
         }
 
-        
-        // Режим «Перед большой заявкой»: одна заявка на покупку на 1 шаг ВЫШЕ крупной заявки (стены).
-        private void BuildWallBuyPlan(MarketDepth marketDepth, List<PlanOrder> plan, decimal totalBuyVolume, List<decimal> foreignVolumes)
+        private void BuildWallBuyPlan(MarketDepth md, List<PlanOrder> plan, decimal totalBuyVolume, List<decimal> foreignVolumes)
         {
-            if (_tab.Security == null || _tab.Security.VolumeStep <= 0)
-            {
-                return;
-            }
-
-            decimal wallPrice = FindWallPrice(foreignVolumes, marketDepth);
+            decimal wallPrice = FindWallPrice(foreignVolumes, md);
 
             if (wallPrice <= 0)
             {
+                _wallCandidatePrice = 0;
+                _wallCandidateCount = 0;
+
                 if (!_wallNotFoundLogged)
                 {
                     _wallNotFoundLogged = true;
@@ -401,15 +343,29 @@ namespace OsEngine.Robots.MarketMaker
 
             _wallNotFoundLogged = false;
 
-            if (marketDepth.Asks == null || marketDepth.Asks.Count == 0)
+            if (wallPrice == _wallCandidatePrice)
+            {
+                _wallCandidateCount++;
+            }
+            else
+            {
+                _wallCandidatePrice = wallPrice;
+                _wallCandidateCount = 1;
+            }
+
+            if (_wallCandidateCount < _wallConfirmTicks.ValueInt)
             {
                 return;
             }
 
-            decimal bestAsk = Convert.ToDecimal(marketDepth.Asks[0].Price);
+            if (md.Asks == null || md.Asks.Count == 0)
+            {
+                return;
+            }
+
+            decimal bestAsk = Convert.ToDecimal(md.Asks[0].Price);
             decimal price = RoundPrice(wallPrice + _tab.Security.PriceStep, Side.Buy);
 
-            // Нельзя пересекать спред
             if (price <= 0 || price >= bestAsk)
             {
                 return;
@@ -423,10 +379,9 @@ namespace OsEngine.Robots.MarketMaker
             }
         }
 
-        // Поиск стены: первый уровень Bids, объём которого >= мин. объёма стены и >= множитель × медиана объёмов.
-        private decimal FindWallPrice(List<decimal> foreignVolumes, MarketDepth marketDepth)
+        private decimal FindWallPrice(List<decimal> foreignVolumes, MarketDepth md)
         {
-            if (marketDepth.Bids == null || marketDepth.Bids.Count < 2)
+            if (md.Bids == null || md.Bids.Count < 2)
             {
                 return 0;
             }
@@ -445,7 +400,7 @@ namespace OsEngine.Robots.MarketMaker
                 if (volume >= _wallMinVolume.ValueDecimal &&
                     volume >= _wallMedianFactor.ValueDecimal * median)
                 {
-                    return Convert.ToDecimal(marketDepth.Bids[i].Price);
+                    return Convert.ToDecimal(md.Bids[i].Price);
                 }
             }
 
@@ -472,31 +427,25 @@ namespace OsEngine.Robots.MarketMaker
             return (sorted[count / 2 - 1] + sorted[count / 2]) / 2m;
         }
 
-        private void BuildSellPlan(MarketDepth marketDepth, List<PlanOrder> plan)
+        private void BuildSellPlan(MarketDepth md, List<PlanOrder> plan)
         {
-
-            // Бюджет — реальные бумаги в портфеле (ValueCurrent − ValueBlocked,
-            // проверку убирать НЕЛЬЗЯ, см. баг 0.3) × % продажи.
-            // План — просто цели по текущему стакану; сверка и частичное
-            // сохранение префикса — в ApplyPlan (последовательная сверка).
-            decimal rest = GetSellTotalVolume(marketDepth);
+            decimal rest = GetSellTotalVolume(md);
 
             if (rest <= 0)
             {
                 return;
             }
 
-            // От лучшего аска вверх: объём = % от объёма уровня, не больше остатка.
-            for (int i = 0; i < marketDepth.Asks.Count && rest > 0; i++)
+            for (int i = 0; i < md.Asks.Count && rest > 0; i++)
             {
-                decimal price = RoundPrice(Convert.ToDecimal(marketDepth.Asks[i].Price), Side.Sell);
+                decimal price = RoundPrice(Convert.ToDecimal(md.Asks[i].Price), Side.Sell);
 
                 if (price <= 0)
                 {
                     continue;
                 }
 
-                decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(marketDepth.Asks[i].Ask);
+                decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(md.Asks[i].Ask);
 
                 if (want > rest)
                 {
@@ -515,11 +464,8 @@ namespace OsEngine.Robots.MarketMaker
             }
         }
 
-        
-        
-        private decimal GetBuyTotalVolume(MarketDepth marketDepth)
+        private decimal GetBuyTotalVolume(MarketDepth md)
         {
-            
             if (_buyVolumeMode.ValueString == "Фиксированный")
             {
                 return _buyTotalVolume.ValueDecimal;
@@ -529,12 +475,11 @@ namespace OsEngine.Robots.MarketMaker
 
             if (portfolio == null)
             {
-                SendNewLogMessage("Портфель недоступен — объём покупки не считаем", LogMessageType.Error);
+                LogPortfolioUnavailable("Портфель недоступен — объём покупки не считаем");
                 return 0;
             }
 
-            
-            decimal bestBid = Convert.ToDecimal(marketDepth.Bids[0].Price);
+            decimal bestBid = Convert.ToDecimal(md.Bids[0].Price);
 
             if (bestBid <= 0)
             {
@@ -545,20 +490,7 @@ namespace OsEngine.Robots.MarketMaker
 
             if (_buyVolumeMode.ValueString == "% от стоимости портфеля")
             {
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                moneyForBuy = GetPortfolioValue(portfolio) * _buyTotalVolume.ValueDecimal / 100m;
+                moneyForBuy = portfolio.ValueCurrent * _buyTotalVolume.ValueDecimal / 100m;
 
                 if (moneyForBuy <= 0)
                 {
@@ -568,29 +500,6 @@ namespace OsEngine.Robots.MarketMaker
                 return moneyForBuy / bestBid;
             }
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
             moneyForBuy = GetFreeMoney(portfolio);
 
             if (moneyForBuy <= 0)
@@ -601,21 +510,6 @@ namespace OsEngine.Robots.MarketMaker
             return moneyForBuy / bestBid;
         }
 
-        
-        
-        
-        
-        
-        
-        
-        private decimal GetPortfolioValue(Portfolio portfolio)
-        {
-            return portfolio.ValueCurrent;
-        }
-
-        
-        
-        
         private decimal GetFreeMoney(Portfolio portfolio)
         {
             List<PositionOnBoard> positionsOnBoard = portfolio.GetPositionOnBoard();
@@ -624,8 +518,6 @@ namespace OsEngine.Robots.MarketMaker
             {
                 for (int i = 0; i < positionsOnBoard.Count; i++)
                 {
-                    
-                    
                     if (positionsOnBoard[i].SecurityNameCode == "rub")
                     {
                         return positionsOnBoard[i].ValueCurrent;
@@ -633,7 +525,6 @@ namespace OsEngine.Robots.MarketMaker
                 }
             }
 
-            
             decimal free = portfolio.ValueCurrent - portfolio.ValueBlocked;
 
             if (free < 0)
@@ -644,21 +535,18 @@ namespace OsEngine.Robots.MarketMaker
             return free;
         }
 
-        
-        
-        private decimal GetSellTotalVolume(MarketDepth marketDepth)
+        private decimal GetSellTotalVolume(MarketDepth md)
         {
             Portfolio portfolio = _tab.Portfolio;
 
             if (portfolio == null)
             {
-                SendNewLogMessage("Портфель недоступен — объём продажи не считаем", LogMessageType.Error);
+                LogPortfolioUnavailable("Портфель недоступен — объём продажи не считаем");
                 return 0;
             }
 
             if (_sellVolumeMode.ValueString == "% от бумаг в портфеле")
             {
-                
                 List<PositionOnBoard> positionsOnBoard = portfolio.GetPositionOnBoard();
 
                 if (positionsOnBoard == null)
@@ -672,9 +560,6 @@ namespace OsEngine.Robots.MarketMaker
                 {
                     if (positionsOnBoard[i].SecurityNameCode == _tab.Security.Name)
                     {
-                        // В T-Invest ValueCurrent уже включает заблокированные лоты,
-                        // а коннектор дополнительно прибавляет ValueBlocked —
-                        // вычитаем, чтобы не пытаться продать больше, чем есть.
                         securityQty = positionsOnBoard[i].ValueCurrent - positionsOnBoard[i].ValueBlocked;
 
                         if (securityQty < 0)
@@ -690,39 +575,42 @@ namespace OsEngine.Robots.MarketMaker
             }
             else
             {
-                
-                
-                decimal bestAsk = Convert.ToDecimal(marketDepth.Asks[0].Price);
+                decimal bestAsk = Convert.ToDecimal(md.Asks[0].Price);
 
                 if (bestAsk <= 0)
                 {
                     return 0;
                 }
 
-                decimal moneyForSell = GetPortfolioValue(portfolio) * _sellPercent.ValueDecimal / 100m;
+                decimal moneyForSell = portfolio.ValueCurrent * _sellPercent.ValueDecimal / 100m;
 
                 return moneyForSell / bestAsk;
             }
         }
 
-        
-        
-        private List<decimal> GetForeignVolumes(List<MarketDepthLevel> levels, Side side)
+        private void LogPortfolioUnavailable(string message)
+        {
+            if (_lastPortfolioErrorLog + PortfolioErrorLogInterval > DateTime.Now)
+            {
+                return;
+            }
+
+            _lastPortfolioErrorLog = DateTime.Now;
+            SendNewLogMessage(message, LogMessageType.Error);
+        }
+
+        private List<decimal> GetForeignVolumes(List<MarketDepthLevel> levels, Side side, List<Order> myActiveOrders)
         {
             List<decimal> result = new List<decimal>();
 
             for (int i = 0; i < levels.Count; i++)
             {
-                
                 decimal foreign = side == Side.Buy
                     ? Convert.ToDecimal(levels[i].Bid)
                     : Convert.ToDecimal(levels[i].Ask);
 
                 result.Add(foreign);
             }
-
-            
-            List<Order> myActiveOrders = GetMyActiveOrders();
 
             for (int i = 0; i < myActiveOrders.Count; i++)
             {
@@ -739,10 +627,12 @@ namespace OsEngine.Robots.MarketMaker
                     {
                         decimal myRest = order.Volume - order.VolumeExecute;
                         result[j] -= myRest;
+
                         if (result[j] < 0)
                         {
                             result[j] = 0;
                         }
+
                         break;
                     }
                 }
@@ -751,22 +641,14 @@ namespace OsEngine.Robots.MarketMaker
             return result;
         }
 
-        
-
-        
-        
-        private void ApplyPlan(List<PlanOrder> plan, List<Order> activeOrders, MarketDepth marketDepth)
+        private void ApplyPlan(List<PlanOrder> plan, List<Order> activeOrders, MarketDepth md)
         {
-            // Последовательная сверка по сторонам: идём от первой заявки плана.
-            // Совпала — следующая. Не совпала на позиции k — снимаем ВСЕ наши
-            // заявки с k-й и проставляем план с k-й. Правильный префикс не трогаем.
-            ApplyPlanSide(plan, activeOrders, Side.Buy, marketDepth);
-            ApplyPlanSide(plan, activeOrders, Side.Sell, marketDepth);
+            ApplyPlanSide(plan, activeOrders, Side.Buy, md);
+            ApplyPlanSide(plan, activeOrders, Side.Sell, md);
         }
 
-        private void ApplyPlanSide(List<PlanOrder> plan, List<Order> activeOrders, Side side, MarketDepth marketDepth)
+        private void ApplyPlanSide(List<PlanOrder> plan, List<Order> activeOrders, Side side, MarketDepth md)
         {
-            // План стороны (уже в порядке сверху вниз)
             List<PlanOrder> planSide = new List<PlanOrder>();
 
             for (int j = 0; j < plan.Count; j++)
@@ -777,8 +659,6 @@ namespace OsEngine.Robots.MarketMaker
                 }
             }
 
-            // Наши активные заявки стороны, сгруппированные по цене
-            // (остатки на одной цене суммируются), в том же порядке.
             List<PlanOrder> mySide = new List<PlanOrder>();
 
             for (int i = 0; i < activeOrders.Count; i++)
@@ -825,7 +705,6 @@ namespace OsEngine.Robots.MarketMaker
                 return b.Price.CompareTo(a.Price);
             });
 
-            // Ищем первое несовпадение
             int k = 0;
 
             while (k < mySide.Count && k < planSide.Count &&
@@ -840,7 +719,19 @@ namespace OsEngine.Robots.MarketMaker
                 return;
             }
 
-            // Снимаем наши заявки с позиции k и до конца
+            if (k == 0 && planSide.Count == 1 && mySide.Count == 1)
+            {
+                Order singleOrder = FindSingleActiveOrder(activeOrders, side);
+
+                if (singleOrder != null &&
+                    singleOrder.Price != planSide[0].Price &&
+                    VolumesMatch(planSide[0].Volume, singleOrder.Volume - singleOrder.VolumeExecute) &&
+                    TryChangeOrderPrice(singleOrder, planSide[0].Price))
+                {
+                    return;
+                }
+            }
+
             List<decimal> cancelPrices = new List<decimal>();
 
             for (int i = k; i < mySide.Count; i++)
@@ -852,7 +743,7 @@ namespace OsEngine.Robots.MarketMaker
             {
                 Order order = activeOrders[i];
 
-                if (order.Side != side || cancelPrices.Contains(order.Price))
+                if (order.Side != side || !cancelPrices.Contains(order.Price))
                 {
                     continue;
                 }
@@ -874,10 +765,6 @@ namespace OsEngine.Robots.MarketMaker
                 return;
             }
 
-            // Проставляем план с позиции k.
-            // Бюджетный клэмп: все активные заявки (включая снимаемые — они
-            // освобождают бумаги/деньги только после подтверждения сервером)
-            // до сих пор держат резерв, поэтому выставим с k-й на следующем тике.
             decimal? budget = null;
             decimal reserved = 0;
 
@@ -897,7 +784,7 @@ namespace OsEngine.Robots.MarketMaker
                 {
                     if (budget == null)
                     {
-                        budget = GetSellTotalVolume(marketDepth);
+                        budget = GetSellTotalVolume(md);
                     }
 
                     decimal canPlace = budget.Value - reserved;
@@ -926,7 +813,7 @@ namespace OsEngine.Robots.MarketMaker
                     {
                         if (budget == null)
                         {
-                            budget = GetBuyTotalVolume(marketDepth);
+                            budget = GetBuyTotalVolume(md);
                         }
 
                         decimal canPlace = budget.Value - reserved;
@@ -953,24 +840,85 @@ namespace OsEngine.Robots.MarketMaker
             }
         }
 
-        
-        private void CancelAllActiveOrders()
+        private Order FindSingleActiveOrder(List<Order> activeOrders, Side side)
+        {
+            Order found = null;
+            int count = 0;
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                Order order = activeOrders[i];
+
+                if (order.Side != side)
+                {
+                    continue;
+                }
+
+                if (order.Volume - order.VolumeExecute <= 0)
+                {
+                    continue;
+                }
+
+                count++;
+                found = order;
+            }
+
+            if (count == 1)
+            {
+                return found;
+            }
+
+            return null;
+        }
+
+        private bool TryChangeOrderPrice(Order order, decimal newPrice)
+        {
+            if (order.State != OrderStateType.Active &&
+                order.State != OrderStateType.Partial)
+            {
+                return false;
+            }
+
+            PendingPriceChange pending;
+
+            if (_ordersOnPriceChange.TryGetValue(order.NumberUser, out pending))
+            {
+                if (pending.TargetPrice == newPrice &&
+                    pending.Time + CancelRetryTimeout > DateTime.Now)
+                {
+                    return true;
+                }
+            }
+
+            _ordersOnPriceChange[order.NumberUser] = new PendingPriceChange
+            {
+                TargetPrice = newPrice,
+                Time = DateTime.Now
+            };
+
+            SendNewLogMessage("Переставляем заявку " + order.Side + " " + order.Price +
+                              " -> " + newPrice, LogMessageType.Trade);
+            _tab.ChangeOrderPrice(order, newPrice);
+
+            return true;
+        }
+
+        private void CancelAllActiveOrders(bool logOrders)
         {
             List<Order> activeOrders = GetMyActiveOrders();
 
             for (int i = 0; i < activeOrders.Count; i++)
             {
-                SendNewLogMessage("Режим Off: снимаем заявку " + activeOrders[i].Side +
-                                  " " + activeOrders[i].Price, LogMessageType.Trade);
+                if (logOrders)
+                {
+                    SendNewLogMessage("Режим Off: снимаем заявку " + activeOrders[i].Side +
+                                      " " + activeOrders[i].Price, LogMessageType.Trade);
+                }
+
                 CancelOrderSafe(activeOrders[i]);
             }
         }
 
-        
-
-        
-        
-        
         private List<Order> GetMyActiveOrders()
         {
             List<Order> result = new List<Order>();
@@ -984,10 +932,6 @@ namespace OsEngine.Robots.MarketMaker
 
             for (int i = 0; i < positions.Count; i++)
             {
-                
-                
-                
-                
                 if (positions[i].State == PositionStateType.OpeningFail ||
                     positions[i].State == PositionStateType.Done)
                 {
@@ -1005,18 +949,12 @@ namespace OsEngine.Robots.MarketMaker
                 {
                     OrderStateType state = openOrders[j].State;
 
-                    
-                    
                     if (state == OrderStateType.Active || state == OrderStateType.Partial)
                     {
                         result.Add(openOrders[j]);
                         continue;
                     }
 
-                    
-                    
-                    
-                    
                     if ((state == OrderStateType.Pending || state == OrderStateType.None) &&
                         positions[i].State == PositionStateType.Opening)
                     {
@@ -1028,36 +966,6 @@ namespace OsEngine.Robots.MarketMaker
             return result;
         }
 
-        
-        
-        private decimal GetNetPositionVolume()
-        {
-            decimal net = 0;
-
-            List<Position> positions = _tab.PositionsOpenAll;
-
-            if (positions == null)
-            {
-                return 0;
-            }
-
-            for (int i = 0; i < positions.Count; i++)
-            {
-                if (positions[i].Direction == Side.Buy)
-                {
-                    net += positions[i].OpenVolume;
-                }
-                else if (positions[i].Direction == Side.Sell)
-                {
-                    net -= positions[i].OpenVolume;
-                }
-            }
-
-            return net;
-        }
-
-        
-        
         private decimal RoundVolume(decimal volume)
         {
             decimal step = _tab.Security.VolumeStep;
@@ -1071,16 +979,12 @@ namespace OsEngine.Robots.MarketMaker
 
             if (rounded <= 0)
             {
-                return step; 
+                return step;
             }
 
             return rounded;
         }
 
-        
-        
-        
-        
         private decimal RoundVolumeDown(decimal volume)
         {
             decimal step = _tab.Security.VolumeStep;
@@ -1093,45 +997,28 @@ namespace OsEngine.Robots.MarketMaker
             decimal steps = Math.Floor(volume / step);
             decimal result = steps * step;
 
-            
             return Math.Round(result, _tab.Security.DecimalsVolume);
         }
 
-        
         private decimal RoundPrice(decimal price, Side side)
         {
             return _tab.RoundPrice(price, _tab.Security, side);
         }
 
-        
-        
-        
-        
-        
-        
         private bool VolumesMatch(decimal planVolume, decimal realVolume)
         {
             decimal step = _tab.Security.VolumeStep;
 
             if (step <= 0)
             {
-                step = 0.0000001m; 
+                step = 0.0000001m;
             }
 
-            // Гистерезис: стоящая заявка покрывает план, если её объём не меньше
-            // планового минус допуск. Объёмы уровней в живом стакане колеблются
-            // каждый тик — при жёсткой сверке (1%) любое колебание давало
-            // «не совпала с планом» и бесконечные cancel/place.
             decimal tolerance = Math.Max(step, planVolume * 0.2m);
 
             return realVolume >= planVolume - tolerance;
         }
 
-        
-        
-        
-        
-        
         private bool OrdersMatchPlan(List<Order> orders, List<PlanOrder> plan)
         {
             if (orders == null || plan == null || orders.Count != plan.Count)
@@ -1155,7 +1042,6 @@ namespace OsEngine.Robots.MarketMaker
                         continue;
                     }
 
-                    
                     if (plan[j].Side == order.Side &&
                         plan[j].Price == order.Price &&
                         VolumesMatch(plan[j].Volume, restVolume))
