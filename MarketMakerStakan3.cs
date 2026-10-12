@@ -195,7 +195,7 @@ namespace OsEngine.Robots.MarketMaker
                     }
 
                     
-                    ApplyPlan(newPlan, activeOrders);
+                    ApplyPlan(newPlan, activeOrders, marketDepth);
                 }
             }
             catch (Exception e)
@@ -344,24 +344,26 @@ namespace OsEngine.Robots.MarketMaker
             }
             else
             {
-                
-                
-                
+                // Распределение сверху вниз: цели по текущему стакану,
+                // сверка с сохранением правильного префикса — в ApplyPlan.
                 decimal rest = totalBuyVolume;
 
                 for (int i = 0; i < marketDepth.Bids.Count && rest > 0; i++)
                 {
-                    
-                    decimal want = _levelVolumePercent.ValueDecimal / 100m * foreignVolumes[i];
+                    decimal price = RoundPrice(Convert.ToDecimal(marketDepth.Bids[i].Price), Side.Buy);
 
-                    
+                    if (price <= 0)
+                    {
+                        continue;
+                    }
+
+                    decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(marketDepth.Bids[i].Bid);
+
                     if (want > rest)
                     {
                         want = rest;
                     }
 
-                    
-                    
                     decimal volume = RoundVolumeDown(want);
 
                     if (volume <= 0)
@@ -369,13 +371,8 @@ namespace OsEngine.Robots.MarketMaker
                         continue;
                     }
 
-                    decimal price = RoundPrice(Convert.ToDecimal(marketDepth.Bids[i].Price), Side.Buy);
-
-                    if (price > 0)
-                    {
-                        plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
-                        rest -= volume;
-                    }
+                    plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
+                    rest -= volume;
                 }
             }
         }
@@ -477,32 +474,35 @@ namespace OsEngine.Robots.MarketMaker
 
         private void BuildSellPlan(MarketDepth marketDepth, List<PlanOrder> plan)
         {
-            
-            decimal totalSellVolume = GetSellTotalVolume(marketDepth);
 
-            if (totalSellVolume <= 0)
+            // Бюджет — реальные бумаги в портфеле (ValueCurrent − ValueBlocked,
+            // проверку убирать НЕЛЬЗЯ, см. баг 0.3) × % продажи.
+            // План — просто цели по текущему стакану; сверка и частичное
+            // сохранение префикса — в ApplyPlan (последовательная сверка).
+            decimal rest = GetSellTotalVolume(marketDepth);
+
+            if (rest <= 0)
             {
                 return;
             }
 
-            // План описывает итоговое желаемое состояние: весь доступный объём из портфеля.
-            // Уже стоящие заявки покрываются сверкой в ApplyPlan, их объём из плана не вычитаем —
-            // иначе стоящая заявка каждый тик «не совпадает с планом» и снимается.
-            decimal rest = totalSellVolume;
-
-            List<decimal> foreignVolumes = GetForeignVolumes(marketDepth.Asks, Side.Sell);
-
+            // От лучшего аска вверх: объём = % от объёма уровня, не больше остатка.
             for (int i = 0; i < marketDepth.Asks.Count && rest > 0; i++)
             {
-                decimal want = _levelVolumePercent.ValueDecimal / 100m * foreignVolumes[i];
+                decimal price = RoundPrice(Convert.ToDecimal(marketDepth.Asks[i].Price), Side.Sell);
+
+                if (price <= 0)
+                {
+                    continue;
+                }
+
+                decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(marketDepth.Asks[i].Ask);
 
                 if (want > rest)
                 {
                     want = rest;
                 }
 
-                
-                
                 decimal volume = RoundVolumeDown(want);
 
                 if (volume <= 0)
@@ -510,13 +510,8 @@ namespace OsEngine.Robots.MarketMaker
                     continue;
                 }
 
-                decimal price = RoundPrice(Convert.ToDecimal(marketDepth.Asks[i].Price), Side.Sell);
-
-                if (price > 0)
-                {
-                    plan.Add(new PlanOrder { Side = Side.Sell, Price = price, Volume = volume });
-                    rest -= volume;
-                }
+                plan.Add(new PlanOrder { Side = Side.Sell, Price = price, Volume = volume });
+                rest -= volume;
             }
         }
 
@@ -677,7 +672,16 @@ namespace OsEngine.Robots.MarketMaker
                 {
                     if (positionsOnBoard[i].SecurityNameCode == _tab.Security.Name)
                     {
-                        securityQty = positionsOnBoard[i].ValueCurrent;
+                        // В T-Invest ValueCurrent уже включает заблокированные лоты,
+                        // а коннектор дополнительно прибавляет ValueBlocked —
+                        // вычитаем, чтобы не пытаться продать больше, чем есть.
+                        securityQty = positionsOnBoard[i].ValueCurrent - positionsOnBoard[i].ValueBlocked;
+
+                        if (securityQty < 0)
+                        {
+                            securityQty = 0;
+                        }
+
                         break;
                     }
                 }
@@ -751,77 +755,200 @@ namespace OsEngine.Robots.MarketMaker
 
         
         
-        private void ApplyPlan(List<PlanOrder> plan, List<Order> activeOrders)
+        private void ApplyPlan(List<PlanOrder> plan, List<Order> activeOrders, MarketDepth marketDepth)
         {
-            
-            bool[] planCovered = new bool[plan.Count];
+            // Последовательная сверка по сторонам: идём от первой заявки плана.
+            // Совпала — следующая. Не совпала на позиции k — снимаем ВСЕ наши
+            // заявки с k-й и проставляем план с k-й. Правильный префикс не трогаем.
+            ApplyPlanSide(plan, activeOrders, Side.Buy, marketDepth);
+            ApplyPlanSide(plan, activeOrders, Side.Sell, marketDepth);
+        }
 
-            
-            for (int i = 0; i < activeOrders.Count; i++)
+        private void ApplyPlanSide(List<PlanOrder> plan, List<Order> activeOrders, Side side, MarketDepth marketDepth)
+        {
+            // План стороны (уже в порядке сверху вниз)
+            List<PlanOrder> planSide = new List<PlanOrder>();
+
+            for (int j = 0; j < plan.Count; j++)
             {
-                Order order = activeOrders[i];
-                decimal restVolume = order.Volume - order.VolumeExecute;
-
-                bool covered = false;
-
-                for (int j = 0; j < plan.Count; j++)
+                if (plan[j].Side == side)
                 {
-                    if (planCovered[j])
-                    {
-                        continue;
-                    }
-
-                    
-                    
-                    
-                    
-                    
-                    
-                    if (plan[j].Side == order.Side &&
-                        plan[j].Price == order.Price &&
-                        VolumesMatch(plan[j].Volume, restVolume))
-                    {
-                        
-                        planCovered[j] = true;
-                        covered = true;
-                        break;
-                    }
-                }
-
-                if (!covered)
-                {
-                    
-                    
-                    
-                    
-                    
-                    
-                    SendNewLogMessage("Снимаем заявку " + order.Side + " " + order.Price +
-                                      " объём " + restVolume + " (не совпала с планом)", LogMessageType.Trade);
-                    CancelOrderSafe(order);
+                    planSide.Add(plan[j]);
                 }
             }
 
-            
-            for (int j = 0; j < plan.Count; j++)
+            // Наши активные заявки стороны, сгруппированные по цене
+            // (остатки на одной цене суммируются), в том же порядке.
+            List<PlanOrder> mySide = new List<PlanOrder>();
+
+            for (int i = 0; i < activeOrders.Count; i++)
             {
-                if (planCovered[j])
+                Order order = activeOrders[i];
+
+                if (order.Side != side)
                 {
                     continue;
                 }
 
-                SendNewLogMessage("Выставляем заявку " + plan[j].Side + " " + plan[j].Price +
-                                  " объём " + plan[j].Volume, LogMessageType.Trade);
+                decimal rest = order.Volume - order.VolumeExecute;
 
-                if (plan[j].Side == Side.Buy)
+                if (rest <= 0)
                 {
-                    
-                    
-                    _tab.BuyAtLimit(plan[j].Volume, plan[j].Price);
+                    continue;
+                }
+
+                bool merged = false;
+
+                for (int m = 0; m < mySide.Count; m++)
+                {
+                    if (mySide[m].Price == order.Price)
+                    {
+                        mySide[m].Volume += rest;
+                        merged = true;
+                        break;
+                    }
+                }
+
+                if (!merged)
+                {
+                    mySide.Add(new PlanOrder { Side = side, Price = order.Price, Volume = rest });
+                }
+            }
+
+            mySide.Sort(delegate (PlanOrder a, PlanOrder b)
+            {
+                if (side == Side.Sell)
+                {
+                    return a.Price.CompareTo(b.Price);
+                }
+
+                return b.Price.CompareTo(a.Price);
+            });
+
+            // Ищем первое несовпадение
+            int k = 0;
+
+            while (k < mySide.Count && k < planSide.Count &&
+                   mySide[k].Price == planSide[k].Price &&
+                   VolumesMatch(planSide[k].Volume, mySide[k].Volume))
+            {
+                k++;
+            }
+
+            if (k == mySide.Count && k == planSide.Count)
+            {
+                return;
+            }
+
+            // Снимаем наши заявки с позиции k и до конца
+            List<decimal> cancelPrices = new List<decimal>();
+
+            for (int i = k; i < mySide.Count; i++)
+            {
+                cancelPrices.Add(mySide[i].Price);
+            }
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                Order order = activeOrders[i];
+
+                if (order.Side != side || cancelPrices.Contains(order.Price))
+                {
+                    continue;
+                }
+
+                decimal restVolume = order.Volume - order.VolumeExecute;
+
+                if (restVolume <= 0)
+                {
+                    continue;
+                }
+
+                SendNewLogMessage("Снимаем заявку " + order.Side + " " + order.Price +
+                                  " объём " + restVolume + " (расходится с планом, позиция " + k + ")", LogMessageType.Trade);
+                CancelOrderSafe(order);
+            }
+
+            if (k >= planSide.Count)
+            {
+                return;
+            }
+
+            // Проставляем план с позиции k.
+            // Бюджетный клэмп: все активные заявки (включая снимаемые — они
+            // освобождают бумаги/деньги только после подтверждения сервером)
+            // до сих пор держат резерв, поэтому выставим с k-й на следующем тике.
+            decimal? budget = null;
+            decimal reserved = 0;
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                if (activeOrders[i].Side == side)
+                {
+                    reserved += activeOrders[i].Volume - activeOrders[i].VolumeExecute;
+                }
+            }
+
+            for (int j = k; j < planSide.Count; j++)
+            {
+                decimal volumeToPlace = planSide[j].Volume;
+
+                if (side == Side.Sell)
+                {
+                    if (budget == null)
+                    {
+                        budget = GetSellTotalVolume(marketDepth);
+                    }
+
+                    decimal canPlace = budget.Value - reserved;
+
+                    if (volumeToPlace > canPlace)
+                    {
+                        volumeToPlace = RoundVolumeDown(canPlace);
+                    }
+
+                    if (volumeToPlace <= 0)
+                    {
+                        SendNewLogMessage("Пропускаем заявку Sell " + planSide[j].Price +
+                                          " (нет свободных бумаг: резерв " + reserved +
+                                          ", доступно " + budget.Value + ")", LogMessageType.Trade);
+                        continue;
+                    }
+
+                    SendNewLogMessage("Выставляем заявку Sell " + planSide[j].Price +
+                                      " объём " + volumeToPlace, LogMessageType.Trade);
+                    _tab.SellAtLimit(volumeToPlace, planSide[j].Price);
+                    reserved += volumeToPlace;
                 }
                 else
                 {
-                    _tab.SellAtLimit(plan[j].Volume, plan[j].Price);
+                    if (_buyVolumeMode.ValueString != "Максимум без маржи")
+                    {
+                        if (budget == null)
+                        {
+                            budget = GetBuyTotalVolume(marketDepth);
+                        }
+
+                        decimal canPlace = budget.Value - reserved;
+
+                        if (volumeToPlace > canPlace)
+                        {
+                            volumeToPlace = RoundVolumeDown(canPlace);
+                        }
+
+                        if (volumeToPlace <= 0)
+                        {
+                            SendNewLogMessage("Пропускаем заявку Buy " + planSide[j].Price +
+                                              " (нет свободных денег: резерв " + reserved +
+                                              ", доступно " + budget.Value + ")", LogMessageType.Trade);
+                            continue;
+                        }
+                    }
+
+                    SendNewLogMessage("Выставляем заявку Buy " + planSide[j].Price +
+                                      " объём " + volumeToPlace, LogMessageType.Trade);
+                    _tab.BuyAtLimit(volumeToPlace, planSide[j].Price);
+                    reserved += volumeToPlace;
                 }
             }
         }
@@ -991,9 +1118,13 @@ namespace OsEngine.Robots.MarketMaker
                 step = 0.0000001m; 
             }
 
-            decimal tolerance = Math.Max(step / 2m, planVolume * 0.01m);
+            // Гистерезис: стоящая заявка покрывает план, если её объём не меньше
+            // планового минус допуск. Объёмы уровней в живом стакане колеблются
+            // каждый тик — при жёсткой сверке (1%) любое колебание давало
+            // «не совпала с планом» и бесконечные cancel/place.
+            decimal tolerance = Math.Max(step, planVolume * 0.2m);
 
-            return Math.Abs(planVolume - realVolume) <= tolerance;
+            return realVolume >= planVolume - tolerance;
         }
 
         
