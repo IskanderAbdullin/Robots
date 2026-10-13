@@ -236,7 +236,7 @@ namespace OsEngine.Robots.MarketMaker
             List<PlanOrder> plan = new List<PlanOrder>();
 
             BuildBuyPlan(md, plan, activeOrders);
-            BuildSellPlan(md, plan);
+            BuildSellPlan(md, plan, activeOrders);
 
             return plan;
         }
@@ -303,7 +303,7 @@ namespace OsEngine.Robots.MarketMaker
                         continue;
                     }
 
-                    decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(md.Bids[i].Bid);
+                    decimal want = _levelVolumePercent.ValueDecimal / 100m * foreignVolumes[i];
 
                     if (want > rest)
                     {
@@ -427,7 +427,7 @@ namespace OsEngine.Robots.MarketMaker
             return (sorted[count / 2 - 1] + sorted[count / 2]) / 2m;
         }
 
-        private void BuildSellPlan(MarketDepth md, List<PlanOrder> plan)
+        private void BuildSellPlan(MarketDepth md, List<PlanOrder> plan, List<Order> activeOrders)
         {
             decimal rest = GetSellTotalVolume(md);
 
@@ -435,6 +435,8 @@ namespace OsEngine.Robots.MarketMaker
             {
                 return;
             }
+
+            List<decimal> foreignVolumes = GetForeignVolumes(md.Asks, Side.Sell, activeOrders);
 
             for (int i = 0; i < md.Asks.Count && rest > 0; i++)
             {
@@ -445,7 +447,7 @@ namespace OsEngine.Robots.MarketMaker
                     continue;
                 }
 
-                decimal want = _levelVolumePercent.ValueDecimal / 100m * Convert.ToDecimal(md.Asks[i].Ask);
+                decimal want = _levelVolumePercent.ValueDecimal / 100m * foreignVolumes[i];
 
                 if (want > rest)
                 {
@@ -873,6 +875,12 @@ namespace OsEngine.Robots.MarketMaker
 
         private bool TryChangeOrderPrice(Order order, decimal newPrice)
         {
+            if (_tab.EmulatorIsOn == false &&
+                _tab.ServerIsSupportChangeOrderPrice == false)
+            {
+                return false;
+            }
+
             if (order.State != OrderStateType.Active &&
                 order.State != OrderStateType.Partial)
             {
