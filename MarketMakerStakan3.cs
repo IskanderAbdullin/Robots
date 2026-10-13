@@ -23,13 +23,17 @@ namespace OsEngine.Robots.MarketMaker
         private StrategyParameterDecimal _sellPercent;
         private StrategyParameterDecimal _wallMinVolume;
         private StrategyParameterDecimal _wallMedianFactor;
-        private StrategyParameterInt _wallConfirmTicks;
+        private StrategyParameterInt _confirmTicks;
 
         private bool _wallNotFoundLogged;
         private decimal _wallCandidatePrice;
         private int _wallCandidateCount;
 
         private bool _ordersClearedInOffMode = false;
+
+        private readonly Dictionary<decimal, decimal> _sellForeignBasis = new Dictionary<decimal, decimal>();
+        private decimal _sellPapersBase = -1m;
+        private readonly Queue<decimal> _sellPapersHistory = new Queue<decimal>();
 
         private readonly Dictionary<int, DateTime> _ordersOnCancel = new Dictionary<int, DateTime>();
         private static readonly TimeSpan CancelRetryTimeout = TimeSpan.FromSeconds(60);
@@ -68,7 +72,7 @@ namespace OsEngine.Robots.MarketMaker
             _sellPercent = CreateParameter("Процент продажи", 100.0m, 1.0m, 100.0m, 1.0m);
             _wallMinVolume = CreateParameter("Мин. объём стены", 100000.0m, 0.0m, 100000000.0m, 1.0m);
             _wallMedianFactor = CreateParameter("Превышение над медианой, раз", 3.0m, 0.0m, 1000.0m, 0.1m);
-            _wallConfirmTicks = CreateParameter("Подтверждение стены, тиков", 3, 1, 20, 1);
+            _confirmTicks = CreateParameter("Проверка моргания, тиков", 3, 1, 20, 1);
 
             _tab.MarketDepthUpdateEvent += _tab_MarketDepthUpdateEvent;
             _tab.OrderUpdateEvent += _tab_OrderUpdateEvent;
@@ -112,6 +116,9 @@ namespace OsEngine.Robots.MarketMaker
                     {
                         CancelAllActiveOrders(!_ordersClearedInOffMode);
                         _ordersClearedInOffMode = true;
+                        _sellForeignBasis.Clear();
+                        _sellPapersBase = -1m;
+                        _sellPapersHistory.Clear();
                         return;
                     }
 
@@ -353,7 +360,7 @@ namespace OsEngine.Robots.MarketMaker
                 _wallCandidateCount = 1;
             }
 
-            if (_wallCandidateCount < _wallConfirmTicks.ValueInt)
+            if (_wallCandidateCount < _confirmTicks.ValueInt)
             {
                 return;
             }
@@ -429,7 +436,7 @@ namespace OsEngine.Robots.MarketMaker
 
         private void BuildSellPlan(MarketDepth md, List<PlanOrder> plan, List<Order> activeOrders)
         {
-            decimal rest = GetSellTotalVolume(md);
+            decimal rest = GetSellPlanVolume(md, activeOrders);
 
             if (rest <= 0)
             {
@@ -437,6 +444,31 @@ namespace OsEngine.Robots.MarketMaker
             }
 
             List<decimal> foreignVolumes = GetForeignVolumes(md.Asks, Side.Sell, activeOrders);
+
+            _sellPapersHistory.Enqueue(rest);
+
+            while (_sellPapersHistory.Count > _confirmTicks.ValueInt)
+            {
+                _sellPapersHistory.Dequeue();
+            }
+
+            decimal papersBase = decimal.MaxValue;
+
+            foreach (decimal value in _sellPapersHistory)
+            {
+                if (value < papersBase)
+                {
+                    papersBase = value;
+                }
+            }
+
+            if (_sellPapersBase != papersBase)
+            {
+                _sellPapersBase = papersBase;
+                _sellForeignBasis.Clear();
+            }
+
+            Dictionary<decimal, decimal> newBasis = new Dictionary<decimal, decimal>();
 
             for (int i = 0; i < md.Asks.Count && rest > 0; i++)
             {
@@ -447,7 +479,17 @@ namespace OsEngine.Robots.MarketMaker
                     continue;
                 }
 
-                decimal want = _levelVolumePercent.ValueDecimal / 100m * foreignVolumes[i];
+                decimal basis = foreignVolumes[i];
+                decimal oldBasis;
+
+                if (_sellForeignBasis.TryGetValue(price, out oldBasis) && oldBasis < basis)
+                {
+                    basis = oldBasis;
+                }
+
+                newBasis[price] = basis;
+
+                decimal want = _levelVolumePercent.ValueDecimal / 100m * basis;
 
                 if (want > rest)
                 {
@@ -464,6 +506,34 @@ namespace OsEngine.Robots.MarketMaker
                 plan.Add(new PlanOrder { Side = Side.Sell, Price = price, Volume = volume });
                 rest -= volume;
             }
+
+            _sellForeignBasis.Clear();
+
+            foreach (KeyValuePair<decimal, decimal> pair in newBasis)
+            {
+                _sellForeignBasis[pair.Key] = pair.Value;
+            }
+        }
+
+        private decimal GetSellPlanVolume(MarketDepth md, List<Order> activeOrders)
+        {
+            if (_sellVolumeMode.ValueString != "% от бумаг в портфеле")
+            {
+                return GetSellTotalVolume(md);
+            }
+
+            decimal free = GetSellTotalVolume(md);
+            decimal reserved = 0;
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                if (activeOrders[i].Side == Side.Sell)
+                {
+                    reserved += activeOrders[i].Volume - activeOrders[i].VolumeExecute;
+                }
+            }
+
+            return free + reserved * _sellPercent.ValueDecimal / 100m;
         }
 
         private decimal GetBuyTotalVolume(MarketDepth md)
@@ -711,7 +781,7 @@ namespace OsEngine.Robots.MarketMaker
 
             while (k < mySide.Count && k < planSide.Count &&
                    mySide[k].Price == planSide[k].Price &&
-                   VolumesMatch(planSide[k].Volume, mySide[k].Volume))
+                   VolumesMatch(planSide[k].Volume, mySide[k].Volume, side))
             {
                 k++;
             }
@@ -727,7 +797,7 @@ namespace OsEngine.Robots.MarketMaker
 
                 if (singleOrder != null &&
                     singleOrder.Price != planSide[0].Price &&
-                    VolumesMatch(planSide[0].Volume, singleOrder.Volume - singleOrder.VolumeExecute) &&
+                    VolumesMatch(planSide[0].Volume, singleOrder.Volume - singleOrder.VolumeExecute, side) &&
                     TryChangeOrderPrice(singleOrder, planSide[0].Price))
                 {
                     return;
@@ -1013,13 +1083,25 @@ namespace OsEngine.Robots.MarketMaker
             return _tab.RoundPrice(price, _tab.Security, side);
         }
 
-        private bool VolumesMatch(decimal planVolume, decimal realVolume)
+        private bool VolumesMatch(decimal planVolume, decimal realVolume, Side side)
         {
             decimal step = _tab.Security.VolumeStep;
 
             if (step <= 0)
             {
                 step = 0.0000001m;
+            }
+
+            if (side == Side.Sell)
+            {
+                if (planVolume > realVolume)
+                {
+                    return false;
+                }
+
+                decimal shrinkTolerance = Math.Max(step, realVolume * 0.1m);
+
+                return planVolume >= realVolume - shrinkTolerance;
             }
 
             decimal tolerance = Math.Max(step, planVolume * 0.2m);
@@ -1052,7 +1134,7 @@ namespace OsEngine.Robots.MarketMaker
 
                     if (plan[j].Side == order.Side &&
                         plan[j].Price == order.Price &&
-                        VolumesMatch(plan[j].Volume, restVolume))
+                        VolumesMatch(plan[j].Volume, restVolume, order.Side))
                     {
                         used[j] = true;
                         found = true;
