@@ -51,13 +51,32 @@ namespace OsEngine.Robots.MarketMaker
         private DateTime _lastProcessTime = DateTime.MinValue;
         private static readonly TimeSpan MinProcessInterval = TimeSpan.FromMilliseconds(100);
 
+        private DateTime _lastOwnOrdersChange = DateTime.MinValue;
+        private static readonly TimeSpan OwnOrdersSettleTime = TimeSpan.FromMilliseconds(400);
+
+        private DateTime _onTime = DateTime.MinValue;
+
         private DateTime _lastPortfolioErrorLog = DateTime.MinValue;
         private static readonly TimeSpan PortfolioErrorLogInterval = TimeSpan.FromSeconds(60);
+
+        private readonly HashSet<int> _restoredPositionNumbers = new HashSet<int>();
+
+        private bool _portfolioTimingLogged;
 
         public MarketMakerStakan3(string name, StartProgram startProgram) : base(name, startProgram)
         {
             TabCreate(BotTabType.Simple);
             _tab = TabsSimple[0];
+
+            List<Position> restoredPositions = _tab.PositionsAll;
+
+            if (restoredPositions != null)
+            {
+                for (int i = 0; i < restoredPositions.Count; i++)
+                {
+                    _restoredPositionNumbers.Add(restoredPositions[i].Number);
+                }
+            }
 
             _tab.ManualPositionSupport.DisableManualSupport();
             _tab.ManualPositionSupport.OrderTypeTime = OrderTypeTime.GTC;
@@ -112,6 +131,31 @@ namespace OsEngine.Robots.MarketMaker
 
                 lock (_planLock)
                 {
+                    if (_regime.ValueString == "On")
+                    {
+                        if (_onTime == DateTime.MinValue)
+                        {
+                            _onTime = DateTime.Now;
+                            SendNewLogMessage("Робот включён в режим \"On\"", LogMessageType.Trade);
+                        }
+
+                        if (!_portfolioTimingLogged)
+                        {
+                            Portfolio portfolio = _tab.Portfolio;
+
+                            if (portfolio != null &&
+                                (portfolio.ValueCurrent > 0 ||
+                                 (portfolio.GetPositionOnBoard() != null &&
+                                  portfolio.GetPositionOnBoard().Count > 0)))
+                            {
+                                _portfolioTimingLogged = true;
+                                SendNewLogMessage("Портфель получен через " +
+                                                  (DateTime.Now - _onTime).TotalSeconds.ToString("F1") +
+                                                  " сек после включения", LogMessageType.Trade);
+                            }
+                        }
+                    }
+
                     if (_regime.ValueString == "Off")
                     {
                         CancelAllActiveOrders(!_ordersClearedInOffMode);
@@ -327,6 +371,8 @@ namespace OsEngine.Robots.MarketMaker
                     plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
                     rest -= volume;
                 }
+
+                ApplyStandingOrdersFloor(plan, activeOrders, Side.Buy);
             }
         }
 
@@ -468,6 +514,8 @@ namespace OsEngine.Robots.MarketMaker
                 _sellForeignBasis.Clear();
             }
 
+            rest = _sellPapersBase;
+
             Dictionary<decimal, decimal> newBasis = new Dictionary<decimal, decimal>();
 
             for (int i = 0; i < md.Asks.Count && rest > 0; i++)
@@ -512,6 +560,46 @@ namespace OsEngine.Robots.MarketMaker
             foreach (KeyValuePair<decimal, decimal> pair in newBasis)
             {
                 _sellForeignBasis[pair.Key] = pair.Value;
+            }
+
+            ApplyStandingOrdersFloor(plan, activeOrders, Side.Sell);
+        }
+
+        private void ApplyStandingOrdersFloor(List<PlanOrder> plan, List<Order> activeOrders, Side side)
+        {
+            if (_lastOwnOrdersChange + OwnOrdersSettleTime < DateTime.Now)
+            {
+                return;
+            }
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                Order order = activeOrders[i];
+
+                if (order.Side != side)
+                {
+                    continue;
+                }
+
+                decimal myRest = order.Volume - order.VolumeExecute;
+
+                if (myRest <= 0)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < plan.Count; j++)
+                {
+                    if (plan[j].Side == side && plan[j].Price == order.Price)
+                    {
+                        if (plan[j].Volume < myRest)
+                        {
+                            plan[j].Volume = myRest;
+                        }
+
+                        break;
+                    }
+                }
             }
         }
 
@@ -830,6 +918,7 @@ namespace OsEngine.Robots.MarketMaker
                 SendNewLogMessage("Снимаем заявку " + order.Side + " " + order.Price +
                                   " объём " + restVolume + " (расходится с планом, позиция " + k + ")", LogMessageType.Trade);
                 CancelOrderSafe(order);
+                _lastOwnOrdersChange = DateTime.Now;
             }
 
             if (k >= planSide.Count)
@@ -878,6 +967,7 @@ namespace OsEngine.Robots.MarketMaker
                                       " объём " + volumeToPlace, LogMessageType.Trade);
                     _tab.SellAtLimit(volumeToPlace, planSide[j].Price);
                     reserved += volumeToPlace;
+                    _lastOwnOrdersChange = DateTime.Now;
                 }
                 else
                 {
@@ -908,6 +998,7 @@ namespace OsEngine.Robots.MarketMaker
                                       " объём " + volumeToPlace, LogMessageType.Trade);
                     _tab.BuyAtLimit(volumeToPlace, planSide[j].Price);
                     reserved += volumeToPlace;
+                    _lastOwnOrdersChange = DateTime.Now;
                 }
             }
         }
@@ -977,6 +1068,7 @@ namespace OsEngine.Robots.MarketMaker
             SendNewLogMessage("Переставляем заявку " + order.Side + " " + order.Price +
                               " -> " + newPrice, LogMessageType.Trade);
             _tab.ChangeOrderPrice(order, newPrice);
+            _lastOwnOrdersChange = DateTime.Now;
 
             return true;
         }
@@ -1010,6 +1102,11 @@ namespace OsEngine.Robots.MarketMaker
 
             for (int i = 0; i < positions.Count; i++)
             {
+                if (_restoredPositionNumbers.Contains(positions[i].Number))
+                {
+                    continue;
+                }
+
                 if (positions[i].State == PositionStateType.OpeningFail ||
                     positions[i].State == PositionStateType.Done)
                 {
