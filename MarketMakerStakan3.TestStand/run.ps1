@@ -64,6 +64,10 @@ if (-not $SkipRealApi) {
     & dotnet @realArgs 2>&1 | Tee-Object -FilePath (Join-Path $logsRoot "$runName-real-api.txt")
     $realExit = $LASTEXITCODE
 }
-Write-Host "Offline exit=$standExit; RealApi exit=$realExit"
+$coordinatorProject = Join-Path $standRoot 'Coordinator\Coordinator.csproj'
+& dotnet run --project $coordinatorProject --verbosity quiet 2>&1 | Tee-Object -FilePath (Join-Path $logsRoot "$runName-coordinator.txt")
+$coordinatorExit = $LASTEXITCODE
+Write-Host "Offline exit=$standExit; RealApi exit=$realExit; Coordinator exit=$coordinatorExit"
 if ($standExit -ne 0) { exit $standExit }
+if ($coordinatorExit -ne 0) { exit $coordinatorExit }
 exit $realExit

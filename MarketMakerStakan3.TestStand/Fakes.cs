@@ -81,6 +81,7 @@ namespace OsEngine.OsTrader.Panels
         public event Action DeleteEvent;
         public event Action ParametrsChangeByUser;
         public bool IsDisposed;
+        public void RaiseParametersChanged() => ParametrsChangeByUser?.Invoke();
         public BotPanel(string name, StartProgram program) { StartProgram=program; }
         public void TabCreate(BotTabType type) => TabsSimple.Add(BotTabSimple.Next ?? new());
         public StrategyParameterString CreateParameter(string name, string value, string[] choices) => new() { ValueString=value };
@@ -183,4 +184,19 @@ namespace OsEngine.OsTrader.Panels.Tab
 }
 
 
+
+namespace OsEngine
+{
+    public static class RobotShutdownCoordinator
+    {
+        public static event Func<Task> BeforeDisconnectEvent;
+        public static int ShutdownSubscribers => BeforeDisconnectEvent?.GetInvocationList().Length ?? 0;
+        public static async Task<bool> PrepareAsync(string reason)
+        {
+            var handlers = BeforeDisconnectEvent?.GetInvocationList().Cast<Func<Task>>().ToArray() ?? Array.Empty<Func<Task>>();
+            try { await Task.WhenAll(handlers.Select(handler => handler())); return true; }
+            catch { return false; }
+        }
+    }
+}
 

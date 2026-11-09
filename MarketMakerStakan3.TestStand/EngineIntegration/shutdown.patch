@@ -1,0 +1,346 @@
+--- a/OsEngine/MainWindow.xaml.cs
++++ b/OsEngine/MainWindow.xaml.cs
+@@ -252,7 +252,7 @@
+         }
+ 
+         /// <summary>Грациозное завершение: только UI-поток, немодальное окно + гарантированный Kill сторожем (~12 с).</summary>
+-        private void BeginGracefulShutdown(bool programmatic)
++        private async void BeginGracefulShutdown(bool programmatic)
+         {
+             try
+             {
+@@ -267,12 +267,15 @@
+                     return;
+                 }
+ 
+-                if (programmatic)
+-                {
+-                    _isProgrammaticClose = true;
+-                }
+-
+-                // сторож вооружается ДО UI-операций: исключение ниже не оставит скрытого «зомби» без Kill
++                if (!await RobotShutdownCoordinator.PrepareAsync("MainWindow"))
++                {
++                    Interlocked.Exchange(ref _shutdownRequested, 0);
++                    return;
++                }
++
++                _isProgrammaticClose = true;
++
++                // Сторож запускается после подтверждённого завершения участников.
+                 Task.Run(async () =>
+                 {
+                     try { await Task.Delay(12000).ConfigureAwait(false); } catch { }
+@@ -304,6 +307,11 @@
+             catch (Exception ex)
+             {
+                 ServerMaster.SendNewLogMessage(ex.ToString(), Logging.LogMessageType.Error);
++                if (ProccesIsWorked)
++                {
++                    _isProgrammaticClose = false;
++                    Interlocked.Exchange(ref _shutdownRequested, 0);
++                }
+             }
+         }
+ 
+--- a/OsEngine/OsTrader/Gui/RobotUi.xaml.cs
++++ b/OsEngine/OsTrader/Gui/RobotUi.xaml.cs
+@@ -66,33 +66,64 @@
+ 
+         public static RobotUi Instance;
+ 
+-        private void RobotUi_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+-        {
+-            try
+-            {
+-                if (Application.Current.MainWindow is MainWindow mainWindow
+-                    && mainWindow.IsProgrammaticClose)
++        private bool _closePending;
++        private bool _closeReady;
++
++        private async void RobotUi_Closing(object sender, System.ComponentModel.CancelEventArgs e)
++        {
++            if (_closeReady)
++            {
++                try
+                 {
+                     ServerMaster.AbortAll();
+                     _strategyKeeper.StopPaint();
+-                    return;
+-                }
+-
+-                AcceptDialogUi ui = new AcceptDialogUi(OsLocalization.Trader.Label48);
+-                ui.ShowDialog();
+-
+-                if (ui.UserAcceptAction == false)
++                }
++                catch (Exception error)
+                 {
+                     e.Cancel = true;
+-                    return;
+-                }
+-
+-                ServerMaster.AbortAll();
+-                _strategyKeeper.StopPaint();
+-            }
+-            catch (Exception ex)
+-            {
+-                _strategyKeeper.SendNewLogMessage(ex.ToString(), Logging.LogMessageType.Error);
++                    _closeReady = false;
++                    ServerMaster.SendNewLogMessage(error.ToString(), Logging.LogMessageType.Error);
++                }
++
++                return;
++            }
++
++            e.Cancel = true;
++            if (_closePending)
++            {
++                return;
++            }
++
++            _closePending = true;
++            try
++            {
++                bool programmatic = Application.Current.MainWindow is MainWindow mainWindow && mainWindow.IsProgrammaticClose;
++                if (!programmatic)
++                {
++                    AcceptDialogUi ui = new AcceptDialogUi(OsLocalization.Trader.Label48);
++                    ui.ShowDialog();
++                    if (!ui.UserAcceptAction)
++                    {
++                        return;
++                    }
++                }
++
++                _closePending = true;
++                if (!await RobotShutdownCoordinator.PrepareAsync("RobotUi"))
++                {
++                    return;
++                }
++
++                _closeReady = true;
++                Dispatcher.BeginInvoke(new Action(Close));
++            }
++            catch (Exception error)
++            {
++                ServerMaster.SendNewLogMessage(error.ToString(), Logging.LogMessageType.Error);
++            }
++            finally
++            {
++                _closePending = false;
+             }
+         }
+ 
+--- a/OsEngine/OsTrader/Gui/RobotUiLite.xaml.cs
++++ b/OsEngine/OsTrader/Gui/RobotUiLite.xaml.cs
+@@ -89,37 +89,78 @@
+             Instance = this;            
+         }
+ 
+-        private void RobotUiLite_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+-        {
+-            try
+-            {
+-                if (Application.Current.MainWindow is MainWindow mainWindow
+-                    && mainWindow.IsProgrammaticClose)
+-                {
+-                    _painterServer.Dispose();
++        private bool _closePending;
++        private bool _closeReady;
++
++        private async void RobotUiLite_Closing(object sender, System.ComponentModel.CancelEventArgs e)
++        {
++            if (_closeReady)
++            {
++                try
++                {
++                    _painterServer?.Dispose();
+                     _painterServer = null;
+                     _painter = null;
+                     _strategyKeeper.StopPaint();
++                }
++                catch (Exception error)
++                {
++                    e.Cancel = true;
++                    _closeReady = false;
++                    ServerMaster.SendNewLogMessage(error.ToString(), Logging.LogMessageType.Error);
++                }
++
++                return;
++            }
++
++            e.Cancel = true;
++            if (_closePending)
++            {
++                return;
++            }
++
++            _closePending = true;
++            try
++            {
++                if (BlockMaster.IsBlocked && !(Application.Current.MainWindow is MainWindow closingMain && closingMain.IsProgrammaticClose))
++                {
++                    ServerMaster.SendNewLogMessage("User block interface. Unblock it.", Logging.LogMessageType.Error);
+                     return;
+                 }
+ 
+-                AcceptDialogUi ui = new AcceptDialogUi(OsLocalization.Trader.Label48);
+-                ui.ShowDialog();
+-
+-                if (ui.UserAcceptAction == false)
+-                {
+-                    e.Cancel = true;
++                bool programmatic = Application.Current.MainWindow is MainWindow mainWindow && mainWindow.IsProgrammaticClose;
++                if (!programmatic)
++                {
++                    AcceptDialogUi ui = new AcceptDialogUi(OsLocalization.Trader.Label48);
++                    ui.ShowDialog();
++                    if (!ui.UserAcceptAction)
++                    {
++                        return;
++                    }
++                }
++
++                _closePending = true;
++                if (!await RobotShutdownCoordinator.PrepareAsync("RobotUiLite"))
++                {
+                     return;
+                 }
+ 
+-                _painterServer.Dispose();
+-                _painterServer = null;
+-                _painter = null;
+-                _strategyKeeper.StopPaint();
+-            }
+-            catch (Exception ex)
+-            {
+-                ServerMaster.SendNewLogMessage(ex.ToString(), Logging.LogMessageType.Error);
++                if (BlockMaster.IsBlocked && !programmatic)
++                {
++                    ServerMaster.SendNewLogMessage("User block interface. Unblock it.", Logging.LogMessageType.Error);
++                    return;
++                }
++
++                _closeReady = true;
++                Dispatcher.BeginInvoke(new Action(Close));
++            }
++            catch (Exception error)
++            {
++                ServerMaster.SendNewLogMessage(error.ToString(), Logging.LogMessageType.Error);
++            }
++            finally
++            {
++                _closePending = false;
+             }
+         }
+ 
+@@ -366,6 +407,11 @@
+ 
+         private void RobotsUiLightUnblock_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+         {
++            if (_closeReady)
++            {
++                return;
++            }
++
+             if (Application.Current.MainWindow is MainWindow mainWindow
+                 && mainWindow.IsProgrammaticClose)
+             {
+--- /dev/null
++++ b/OsEngine/RobotShutdownCoordinator.cs
+@@ -0,0 +1,94 @@
++/*
++ * Your rights to use code governed by this license https://github.com/AlexWan/OsEngine/blob/master/LICENSE
++ * Ваши права на использование кода регулируются данной лицензией http://o-s-a.net/doc/license_simple_engine.pdf
++*/
++
++using OsEngine.Logging;
++using OsEngine.Market;
++using System;
++using System.Collections.Generic;
++using System.Threading.Tasks;
++
++namespace OsEngine
++{
++    public static class RobotShutdownCoordinator
++    {
++        private static readonly object Sync = new object();
++        private static Task<bool> _preparingTask;
++        private static Task _runningCallbacks = Task.CompletedTask;
++
++        public static event Func<Task> BeforeDisconnectEvent;
++
++        public static Task<bool> PrepareAsync(string reason, TimeSpan? timeout = null)
++        {
++            lock (Sync)
++            {
++                if (_preparingTask == null || (_preparingTask.IsCompleted && _runningCallbacks.IsCompleted))
++                {
++                    _preparingTask = PrepareCoreAsync(reason, timeout ?? TimeSpan.FromSeconds(8));
++                }
++
++                return _preparingTask;
++            }
++        }
++
++        private static async Task<bool> PrepareCoreAsync(string reason, TimeSpan timeout)
++        {
++            Func<Task> handlers = BeforeDisconnectEvent;
++            if (handlers == null)
++            {
++                return true;
++            }
++
++            List<Task<bool>> tasks = new List<Task<bool>>();
++            foreach (Delegate subscriber in handlers.GetInvocationList())
++            {
++                Func<Task> handler = (Func<Task>)subscriber;
++                tasks.Add(Task.Run(async () =>
++                {
++                    try
++                    {
++                        Task task = handler();
++                        if (task == null)
++                        {
++                            throw new InvalidOperationException("Shutdown participant returned no completion task.");
++                        }
++
++                        await task.ConfigureAwait(false);
++                        return true;
++                    }
++                    catch (Exception error)
++                    {
++                        ServerMaster.SendNewLogMessage("Robot shutdown failed (" + reason + "): " + error, LogMessageType.Error);
++                        return false;
++                    }
++                }));
++            }
++
++            Task<bool[]> all = Task.WhenAll(tasks);
++            _runningCallbacks = all;
++            if (await Task.WhenAny(all, Task.Delay(timeout)).ConfigureAwait(false) != all)
++            {
++                ServerMaster.SendNewLogMessage("Robot shutdown timed out (" + reason + "). Close cancelled; connections remain available for reconciliation.", LogMessageType.Error);
++                return false;
++            }
++
++            bool[] results = await all.ConfigureAwait(false);
++            for (int i = 0; i < results.Length; i++)
++            {
++                if (!results[i])
++                {
++                    return false;
++                }
++            }
++
++            if (!Equals(handlers, BeforeDisconnectEvent))
++            {
++                ServerMaster.SendNewLogMessage("Robot shutdown participants changed (" + reason + "). Close cancelled; retry after reconciliation.", LogMessageType.Error);
++                return false;
++            }
++
++            return true;
++        }
++    }
++}

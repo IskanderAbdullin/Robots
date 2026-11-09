@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <CoordinatorSource Condition="'$(CoordinatorSource)' == '' and Exists('../../CoreShutdown/RobotShutdownCoordinator.cs')">../../CoreShutdown/RobotShutdownCoordinator.cs</CoordinatorSource>
+    <CoordinatorSource Condition="'$(CoordinatorSource)' == ''">../Core/RobotShutdownCoordinator.cs</CoordinatorSource>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="$(CoordinatorSource)" Link="RobotShutdownCoordinator.cs"/><Compile Include="Program.cs"/><Compile Include="Fakes.cs"/></ItemGroup>
+</Project>

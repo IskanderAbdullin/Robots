@@ -32,7 +32,7 @@ public static partial class Cases
     static void RunTrace(TestContext c,string mode)
     {
         int modeKey=Array.IndexOf(new[]{Fixture.Distributed,Fixture.Single,Fixture.Specified,Fixture.Wall},mode);
-        var random=new Random(unchecked(c.Seed+modeKey*100003));var f=c.New(100);f.String("_buyMode",mode);f.Decimal("_specifiedOrderVolume",50);f.Decimal("_wallMinVolume",100);f.Decimal("_wallMedianFactor",2);f.Int("_confirmTicks",2);
+        var random=new Random(unchecked(c.Seed+modeKey*100003));var f=c.New(100);f.AllowSafetyCancelAfterError=true;f.String("_buyMode",mode);f.Decimal("_specifiedOrderVolume",50);f.Decimal("_wallMinVolume",100);f.Decimal("_wallMedianFactor",2);f.Int("_confirmTicks",2);
         int errorCommands=-1;
         for(int i=0;i<c.Iterations;i++)
         {
@@ -67,7 +67,8 @@ public static partial class Cases
                     f.Tick(d);if(random.Next(3)==0){c.PropertyEventCount++;f.Tick(d);}break;
             }
             f.Verify();
-            if(errorCommands>=0)Assert.Equal(errorCommands,f.Count,"requests continued after Error");
+            if(errorCommands>=0)Assert.That(f.Tab.Commands.Skip(errorCommands).All(x=>x.Kind=="Cancel"),"Place or Change request continued after Error");
         }
     }
 }
+

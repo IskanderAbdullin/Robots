@@ -6,6 +6,8 @@ using OsEngine.OsTrader.Panels.Tab;
 using OsEngine.OsTrader.Panels.Tab.Internal;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Threading.Tasks;
 
 namespace OsEngine.Robots.MarketMaker
 {
@@ -61,6 +63,14 @@ namespace OsEngine.Robots.MarketMaker
         private bool _executionError;
         private bool _insideCommand;
         private bool _processingDepth;
+        private bool _handlingParameters;
+        private bool _pumpingStop;
+        private bool _stopCancellationRequested;
+        private bool _shutdownStopping;
+        private Task _shutdownTask;
+        private DateTime _shutdownDeadline;
+        private EventInfo _shutdownEvent;
+        private Func<Task> _shutdownHandler;
         private volatile bool _deleted;
         private long _commandsSent;
         private long _placementNumber;
@@ -125,7 +135,9 @@ namespace OsEngine.Robots.MarketMaker
             _tab.OrderUpdateEvent += _tab_OrderUpdateEvent;
             _tab.Connector.OrderChangeEvent += _tab_OrderUpdateEvent;
             _tab.PortfolioOnExchangeChangedEvent += PortfolioChanged;
+            ParametrsChangeByUser += ParametersChanged;
             DeleteEvent += MarketMakerStakan3_DeleteEvent;
+            AttachShutdownHook();
         }
 
         public override string GetNameStrategyType()
@@ -143,10 +155,208 @@ namespace OsEngine.Robots.MarketMaker
             {
                 _deleted = true;
                 _operationTimer.Dispose();
+                ParametrsChangeByUser -= ParametersChanged;
+                if (_shutdownEvent != null && _shutdownHandler != null)
+                {
+                    _shutdownEvent.RemoveEventHandler(null, _shutdownHandler);
+                    _shutdownEvent = null;
+                    _shutdownHandler = null;
+                }
                 _tab.MarketDepthUpdateEvent -= _tab_MarketDepthUpdateEvent;
                 _tab.OrderUpdateEvent -= _tab_OrderUpdateEvent;
                 _tab.Connector.OrderChangeEvent -= _tab_OrderUpdateEvent;
                 _tab.PortfolioOnExchangeChangedEvent -= PortfolioChanged;
+            }
+        }
+
+        private void AttachShutdownHook()
+        {
+            if (StartProgram != StartProgram.IsOsTrader)
+            {
+                return;
+            }
+
+            try
+            {
+                Type coordinator = typeof(BotPanel).Assembly.GetType("OsEngine.RobotShutdownCoordinator");
+                _shutdownEvent = coordinator == null ? null : coordinator.GetEvent("BeforeDisconnectEvent", BindingFlags.Public | BindingFlags.Static);
+                if (_shutdownEvent == null || _shutdownEvent.EventHandlerType != typeof(Func<Task>))
+                {
+                    _shutdownEvent = null;
+                    SendNewLogMessage("Ядро не поддерживает подтверждённое снятие заявок перед завершением. Перед закрытием включите Off и дождитесь снятия собственных заявок.", LogMessageType.System);
+                    return;
+                }
+
+                _shutdownHandler = PrepareForShutdownAsync;
+                _shutdownEvent.AddEventHandler(null, _shutdownHandler);
+            }
+            catch (Exception error)
+            {
+                _shutdownEvent = null;
+                _shutdownHandler = null;
+                SendNewLogMessage("Не удалось подключить обработчик завершения: " + error, LogMessageType.Error);
+            }
+        }
+
+        private void ParametersChanged()
+        {
+            lock (_planLock)
+            {
+                if (_deleted || _handlingParameters)
+                {
+                    return;
+                }
+
+                _handlingParameters = true;
+                try
+                {
+                    if (_shutdownStopping && _regime.ValueString != "Off")
+                    {
+                        _regime.ValueString = "Off";
+                    }
+
+                    _stopCancellationRequested = _shutdownStopping || _regime.ValueString == "Off";
+                    if (_stopCancellationRequested)
+                    {
+                        _sellForeignBasis.Clear();
+                        _sellPapersBase = -1m;
+                        _sellPapersHistory.Clear();
+                        PumpStopCancellations();
+                    }
+                }
+                catch (Exception error)
+                {
+                    SetExecutionError("Остановка по параметру Off: " + error);
+                }
+                finally
+                {
+                    _handlingParameters = false;
+                }
+            }
+        }
+
+        private bool CanSendCancellation()
+        {
+            CheckOperationTimeout();
+            return !_deleted && !_insideCommand && _operation == null && _tab.IsConnected && _tab.IsReadyToTrade &&
+                (!_executionError || _stopCancellationRequested || _shutdownStopping || _regime.ValueString == "Off");
+        }
+
+        private void PumpStopCancellations()
+        {
+            if (_pumpingStop || !_stopCancellationRequested || !CanSendCancellation())
+            {
+                return;
+            }
+
+            _pumpingStop = true;
+            try
+            {
+                CancelAllActiveOrders(false);
+            }
+            finally
+            {
+                _pumpingStop = false;
+            }
+        }
+
+        private Task PrepareForShutdownAsync()
+        {
+            lock (_planLock)
+            {
+                if (_shutdownTask != null && !_shutdownTask.IsCompleted)
+                {
+                    return _shutdownTask;
+                }
+
+                _shutdownStopping = true;
+                _stopCancellationRequested = true;
+                _regime.ValueString = "Off";
+                _shutdownDeadline = DateTime.UtcNow.AddSeconds(7);
+                TaskCompletionSource<bool> completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _shutdownTask = completion.Task;
+                Task worker = CompleteShutdownAsync(completion);
+                return _shutdownTask;
+            }
+        }
+
+        private async Task CompleteShutdownAsync(TaskCompletionSource<bool> completion)
+        {
+            try
+            {
+                while (true)
+                {
+                    lock (_planLock)
+                    {
+                        if (_deleted)
+                        {
+                            throw new InvalidOperationException("Робот удалён до подтверждения завершения снятия заявок");
+                        }
+
+                        GetMyActiveOrders();
+                        bool pending = _operation != null || _insideCommand;
+                        string unresolved = "";
+                        foreach (KeyValuePair<int, Order> entry in _ownOrders)
+                        {
+                            Order order = entry.Value;
+                            if (!IsTerminal(order.State))
+                            {
+                                pending = true;
+                                unresolved += " user=" + order.NumberUser + " market=" + order.NumberMarket + " state=" + order.State +
+                                    " executed=" + order.VolumeExecute + " rest=" + Math.Max(0, order.Volume - order.VolumeExecute);
+                            }
+                        }
+
+                        List<Position> positions = _tab.PositionsAll;
+                        for (int i = 0; positions != null && i < positions.Count; i++)
+                        {
+                            Position position = positions[i];
+                            if (position == null || position.OpenOrders == null)
+                            {
+                                continue;
+                            }
+
+                            for (int j = 0; j < position.OpenOrders.Count; j++)
+                            {
+                                Order order = position.OpenOrders[j];
+                                if (order != null && !IsTerminal(order.State) &&
+                                    (_restoredPositionNumbers.Contains(position.Number) || !_ownOrders.ContainsKey(order.NumberUser)))
+                                {
+                                    pending = true;
+                                    unresolved += " unmanaged user=" + order.NumberUser + " market=" + order.NumberMarket +
+                                        " state=" + order.State + "; требуется ручная сверка старой или неизвестной заявки";
+                                }
+                            }
+                        }
+
+                        if (!pending)
+                        {
+                            SendNewLogMessage("Shutdown complete: все собственные заявки имеют подтверждённый терминальный статус", LogMessageType.Trade);
+                            completion.TrySetResult(true);
+                            return;
+                        }
+
+                        if (DateTime.UtcNow >= _shutdownDeadline)
+                        {
+                            if (_operation != null)
+                            {
+                                unresolved += " operation=" + _operation.Kind + " user=" + _operation.NumberUser;
+                            }
+
+                            string message = "Завершение остановки не подтверждено; закрытие должно быть отменено. Требуется сверка собственных заявок:" + unresolved;
+                            SendNewLogMessage(message, LogMessageType.Error);
+                            throw new TimeoutException(message);
+                        }
+
+                        PumpStopCancellations();
+                    }
+
+                    await Task.Delay(50).ConfigureAwait(false);
+                }
+            }
+            catch (Exception error)
+            {
+                completion.TrySetException(error);
             }
         }
 
@@ -183,8 +393,16 @@ namespace OsEngine.Robots.MarketMaker
                             return;
                         }
     
+                        if (_shutdownStopping)
+                        {
+                            _stopCancellationRequested = true;
+                            PumpStopCancellations();
+                            return;
+                        }
+
                         if (_regime.ValueString == "On")
                         {
+                            _stopCancellationRequested = false;
                             if (_onTime == DateTime.MinValue)
                             {
                                 _onTime = DateTime.Now;
@@ -210,6 +428,7 @@ namespace OsEngine.Robots.MarketMaker
     
                         if (_regime.ValueString == "Off")
                         {
+                            _stopCancellationRequested = true;
                             CancelAllActiveOrders(!_ordersClearedInOffMode);
                             _ordersClearedInOffMode = true;
                             _sellForeignBasis.Clear();
@@ -368,7 +587,7 @@ namespace OsEngine.Robots.MarketMaker
 
                     RememberOrder(order, portfolioVersion);
                     Trace("OrderUpdate", order);
-                    if (_operation != null && _operation.NumberUser == order.NumberUser && !_executionError)
+                    if (_operation != null && _operation.NumberUser == order.NumberUser)
                     {
                         Order current = _ownOrders[order.NumberUser];
                         bool terminal = IsTerminal(current.State);
@@ -386,6 +605,12 @@ namespace OsEngine.Robots.MarketMaker
                     if (order.State == OrderStateType.Fail)
                     {
                         SetExecutionError("Биржа отклонила собственную заявку " + order.NumberUser);
+                    }
+
+                    if (_stopCancellationRequested || _shutdownStopping || _regime.ValueString == "Off")
+                    {
+                        _stopCancellationRequested = true;
+                        PumpStopCancellations();
                     }
                 }
                 catch (Exception error)
@@ -576,9 +801,10 @@ namespace OsEngine.Robots.MarketMaker
                 try
                 {
                     CheckOperationTimeout();
-                    if (_regime.ValueString == "Off" && CanSendOperation())
+                    if (_regime.ValueString == "Off" || _shutdownStopping || _stopCancellationRequested)
                     {
-                        CancelAllActiveOrders(false);
+                        _stopCancellationRequested = true;
+                        PumpStopCancellations();
                     }
                 }
                 catch (Exception error)
@@ -607,7 +833,7 @@ namespace OsEngine.Robots.MarketMaker
 
         private void CancelOrderSafe(Order order)
         {
-            if (order == null || !CanSendOperation() ||
+            if (order == null || !CanSendCancellation() ||
                 (order.State != OrderStateType.Active && order.State != OrderStateType.Partial))
             {
                 return;
@@ -646,7 +872,7 @@ namespace OsEngine.Robots.MarketMaker
 
         private void PlaceOrderSafe(Side side, decimal volume, decimal price)
         {
-            if (_regime.ValueString != "On" || !CanSendOperation() || volume <= 0 || price <= 0)
+            if (_shutdownStopping || _stopCancellationRequested || _regime.ValueString != "On" || !CanSendOperation() || volume <= 0 || price <= 0)
             {
                 return;
             }
@@ -1749,6 +1975,11 @@ namespace OsEngine.Robots.MarketMaker
 
         private bool TryChangeOrderPrice(Order order, decimal newPrice)
         {
+            if (_shutdownStopping || _stopCancellationRequested)
+            {
+                return true;
+            }
+
             if (StartProgram != StartProgram.IsOsTrader)
             {
                 return false;

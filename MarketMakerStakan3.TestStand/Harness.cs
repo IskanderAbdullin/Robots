@@ -49,6 +49,7 @@ public sealed class Fixture : IDisposable
     public Command Outstanding;
     public Action<Command> CommandObserver;
     public bool Disposed;
+    public bool AllowSafetyCancelAfterError;
     public Fixture(decimal stock=0,StartProgram program=StartProgram.IsTester,BotTabSimple tab=null)
     {
         Tab=tab ?? new();
@@ -111,7 +112,7 @@ public sealed class Fixture : IDisposable
     {
         Trace.Add($"command {command}");
         if(Outstanding!=null)Violations.Add($"parallel command {command.Kind}, outstanding={Outstanding}");
-        if(Error)Violations.Add("command after Error");
+        if(Error && !(AllowSafetyCancelAfterError && command.Kind=="Cancel" && (String("_regime")=="Off" || (Reflect.Maybe(Robot,"_shutdownStopping") is bool stopping && stopping)) && ((Dictionary<int,Order>)Reflect.Get(Robot,"_ownOrders")).ContainsKey(command.NumberUser)))Violations.Add("command after Error");
         if(command.Kind=="Place" && String("_regime")!="On")Violations.Add("placement while Off");
         if(command.Price<=0 || command.Volume<=0)Violations.Add("nonpositive command price/volume");
         if(Disposed)Violations.Add("command after Delete");
@@ -162,4 +163,6 @@ public sealed class CappedTrace : IEnumerable<string>
     public IEnumerator<string> GetEnumerator() { lock(lines)return ((IEnumerable<string>)lines.ToArray()).GetEnumerator(); }
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()=>GetEnumerator();
 }
+
+
 

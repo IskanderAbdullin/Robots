@@ -20,6 +20,16 @@ internal static class Program
             if (metadata.Key == "EngineBin") Console.WriteLine("Configured EngineBin: " + metadata.Value);
         }
 
+        Test("Installed engine exposes before-disconnect shutdown hook", () =>
+        {
+            Type coordinator = typeof(Order).Assembly.GetType("OsEngine.RobotShutdownCoordinator");
+            Require(coordinator != null && coordinator.GetEvent("BeforeDisconnectEvent")?.EventHandlerType == typeof(Func<System.Threading.Tasks.Task>), "Patched OsEngine shutdown hook is missing");
+        });
+        Test("Installed engine provides asynchronous shutdown result", () =>
+        {
+            Type coordinator = typeof(Order).Assembly.GetType("OsEngine.RobotShutdownCoordinator");
+            Require(coordinator?.GetMethod("PrepareAsync")?.ReturnType == typeof(System.Threading.Tasks.Task<bool>), "Shutdown coordinator result contract differs");
+        });
         Test("MarketDepth.GetCopy isolates price and quantity", () =>
         {
             MarketDepth depth = Depth();
