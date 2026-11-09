@@ -6,13 +6,11 @@ on:
     paths:
       - 'MarketMakerStakan3.cs'
       - 'MarketMakerStakan3.md'
-      - 'tools/osengine_lab_audit.py'
       - '.github/workflows/osengine-lab-marketmaker.yml'
   pull_request:
     paths:
       - 'MarketMakerStakan3.cs'
       - 'MarketMakerStakan3.md'
-      - 'tools/osengine_lab_audit.py'
       - '.github/workflows/osengine-lab-marketmaker.yml'
   workflow_dispatch:
   schedule:
@@ -21,22 +19,12 @@ on:
 permissions:
   contents: read
 
+# DEPENDENCY: merge OsEngine shared CI into master first, then permit private
+# repositories to call its workflows under OsEngine Settings > Actions > General.
 jobs:
   source-audit:
-    name: Source inventory (NOT functional tests)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - name: Inspect source-only properties, without OsEngine
-        run: python3 tools/osengine_lab_audit.py --file MarketMakerStakan3.cs --out osengine-report.json
-      - name: Flag report-generation failure
-        if: failure()
-        run: echo 'Source inventory failed before creating a report.' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: osengine-lab-marketmaker-${{ github.run_id }}
-          path: osengine-report.json
-          if-no-files-found: warn
-          retention-days: 30
+    uses: IskanderAbdullin/OsEngine/.github/workflows/osengine-lab-reusable-source.yml@master
+    with:
+      bot: MarketMakerStakan3
+      source_file: MarketMakerStakan3.cs
+      markers_json: '["MarketDepthUpdateEvent","GetCopy()","_planLock","PriceStep","VolumeStep","Portfolio","GetPositionOnBoard","BuyAtLimit","Перед большой заявкой"]'
