@@ -1,0 +1,30 @@
+name: OsEngine Lab | MarketMakerStakan3 monitoring
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'MarketMakerStakan3.cs'
+      - 'MarketMakerStakan3.md'
+      - '.github/workflows/osengine-lab-marketmaker.yml'
+  pull_request:
+    paths:
+      - 'MarketMakerStakan3.cs'
+      - 'MarketMakerStakan3.md'
+      - '.github/workflows/osengine-lab-marketmaker.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '37 6 * * 1'
+
+permissions:
+  contents: read
+
+# DEPENDENCY: merge OsEngine shared CI into master first, then permit private
+# repositories to call its workflows under OsEngine Settings > Actions > General.
+jobs:
+  source-audit:
+    uses: IskanderAbdullin/OsEngine/.github/workflows/osengine-lab-reusable-source.yml@master
+    with:
+      bot: MarketMakerStakan3
+      source_file: MarketMakerStakan3.cs
+      markers_json: '["MarketDepthUpdateEvent","GetCopy()","_planLock","PriceStep","VolumeStep","Portfolio","GetPositionOnBoard","BuyAtLimit","Перед большой заявкой"]'
