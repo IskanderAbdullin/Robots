@@ -1,0 +1,5 @@
+bin/
+obj/
+RealApi/bin/
+RealApi/obj/
+Logs/

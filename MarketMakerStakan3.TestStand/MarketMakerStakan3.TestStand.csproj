@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RobotSource Condition="'$(RobotSource)' == '' and Exists('../MarketMakerStakan3.cs')">../MarketMakerStakan3.cs</RobotSource>
+    <RobotSource Condition="'$(RobotSource)' == ''">../../Robots/MarketMakerStakan3.cs</RobotSource>
+    <NoWarn>$(NoWarn);CS0067</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(RobotSource)" Link="RobotUnderTest.cs" />
+    <Compile Include="Fakes.cs" />
+    <Compile Include="Harness.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Modules/*.cs" />
+  </ItemGroup>
+  <Target Name="RobotIdentity" BeforeTargets="CoreCompile">
+    <GetFileHash Files="$(RobotSource)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="RobotHash" /></GetFileHash>
+    <WriteLinesToFile File="$(IntermediateOutputPath)RobotIdentity.g.cs" Overwrite="true" Lines="namespace OfflineStand { public static class RobotIdentity { public const string Hash = &quot;%(RobotHash.FileHash)&quot;%3B } }" />
+    <ItemGroup><Compile Include="$(IntermediateOutputPath)RobotIdentity.g.cs" /></ItemGroup>
+  </Target>
+</Project>
+

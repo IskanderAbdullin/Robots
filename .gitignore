@@ -2,3 +2,10 @@
 !MarketMakerStakan3.md
 !MarketMakerStakan3.cs
 !.gitignore
+
+!.gitattributes
+!MarketMakerStakan3.TestStand/
+!MarketMakerStakan3.TestStand/**
+**/bin/
+**/obj/
+**/Logs/

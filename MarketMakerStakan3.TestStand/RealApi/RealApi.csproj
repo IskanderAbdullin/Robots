@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RobotSource Condition="'$(RobotSource)' == '' and Exists('$(MSBuildThisFileDirectory)../../MarketMakerStakan3.cs')">$(MSBuildThisFileDirectory)../../MarketMakerStakan3.cs</RobotSource>
+    <RobotSource Condition="'$(RobotSource)' == ''">$(MSBuildThisFileDirectory)../../../Robots/MarketMakerStakan3.cs</RobotSource>
+    <EngineBin Condition="'$(EngineBin)' == '' and Exists('$(MSBuildThisFileDirectory)../../../../OsEngine.dll')">$(MSBuildThisFileDirectory)../../../..</EngineBin>
+    <EngineBin Condition="'$(EngineBin)' == ''">R:\1.OSENGINE\02.11.2026 для написания\OsEngine-master\project\OsEngine\bin\Debug</EngineBin>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(RobotSource)" />
+    <Compile Include="Program.cs" />
+    <Reference Include="OsEngine"><HintPath>$(EngineBin)/OsEngine.dll</HintPath></Reference>
+    <AssemblyMetadata Include="EngineBin" Value="$(EngineBin)" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,1711 @@
+using OsEngine.Entity;
+using OsEngine.Logging;
+using OsEngine.OsTrader.Panels;
+using OsEngine.OsTrader.Panels.Attributes;
+using OsEngine.OsTrader.Panels.Tab;
+using OsEngine.OsTrader.Panels.Tab.Internal;
+using System;
+using System.Collections.Generic;
+
+namespace OsEngine.Robots.MarketMaker
+{
+    [Bot("MarketMakerStakan3")]
+    public class MarketMakerStakan3 : BotPanel
+    {
+        private BotTabSimple _tab;
+
+        private StrategyParameterString _regime;
+        private StrategyParameterString _buyMode;
+        private StrategyParameterDecimal _buyTotalVolume;
+        private StrategyParameterString _buyVolumeMode;
+        private StrategyParameterDecimal _specifiedOrderVolume;
+        private StrategyParameterDecimal _levelVolumePercent;
+        private StrategyParameterString _sellVolumeMode;
+        private StrategyParameterDecimal _sellPercent;
+        private StrategyParameterDecimal _wallMinVolume;
+        private StrategyParameterDecimal _wallMedianFactor;
+        private StrategyParameterInt _confirmTicks;
+
+        private bool _wallNotFoundLogged;
+        private decimal _wallCandidatePrice;
+        private int _wallCandidateCount;
+
+        private bool _ordersClearedInOffMode = false;
+
+        private readonly Dictionary<decimal, decimal> _sellForeignBasis = new Dictionary<decimal, decimal>();
+        private decimal _sellPapersBase = -1m;
+        private readonly Queue<decimal> _sellPapersHistory = new Queue<decimal>();
+
+        private static readonly TimeSpan CancelRetryTimeout = TimeSpan.FromSeconds(60);
+
+        private readonly object _planLock = new object();
+
+        private DateTime _lastProcessTime = DateTime.MinValue;
+        private static readonly TimeSpan MinProcessInterval = TimeSpan.FromMilliseconds(100);
+
+        private DateTime _lastOwnOrdersChange = DateTime.MinValue;
+        private static readonly TimeSpan OwnOrdersSettleTime = TimeSpan.FromMilliseconds(400);
+
+        private DateTime _onTime = DateTime.MinValue;
+
+        private DateTime _lastPortfolioErrorLog = DateTime.MinValue;
+        private static readonly TimeSpan PortfolioErrorLogInterval = TimeSpan.FromSeconds(60);
+
+        private readonly HashSet<int> _restoredPositionNumbers = new HashSet<int>();
+
+        private bool _portfolioTimingLogged;
+        private StrategyParameterString _diagnostics;
+        private DateTime _diagnosticsStarted;
+        private long _eventNumber;
+        private bool _executionError;
+        private bool _insideCommand;
+        private bool _deleted;
+        private long _commandsSent;
+        private decimal _snapshotPortfolioValue;
+        private decimal _snapshotFreeMoney;
+        private decimal _snapshotFreeSecurity;
+        private bool _snapshotPortfolioReady;
+        private DateTime _lastTerminalTime;
+        private ExecutionOperation _operation;
+        private readonly Dictionary<int, Order> _ownOrders = new Dictionary<int, Order>();
+        private readonly System.Threading.Timer _operationTimer;
+
+        private class ExecutionOperation
+        {
+            public string Kind;
+            public int NumberUser;
+            public Side Side;
+            public decimal TargetPrice;
+            public DateTime Time;
+        }
+
+        public MarketMakerStakan3(string name, StartProgram startProgram) : base(name, startProgram)
+        {
+            TabCreate(BotTabType.Simple);
+            _tab = TabsSimple[0];
+
+            List<Position> restoredPositions = _tab.PositionsAll;
+
+            if (restoredPositions != null)
+            {
+                for (int i = 0; i < restoredPositions.Count; i++)
+                {
+                    _restoredPositionNumbers.Add(restoredPositions[i].Number);
+                }
+            }
+
+            _tab.ManualPositionSupport.DisableManualSupport();
+            _tab.ManualPositionSupport.OrderTypeTime = OrderTypeTime.GTC;
+            _tab.ManualPositionSupport.Save();
+
+            _regime = CreateParameter("Режим", "Off", new[] { "Off", "On" });
+            _buyMode = CreateParameter("Режим покупки", "Распределение сверху вниз", new[] { "Один уровень (макс. объём)", "Распределение сверху вниз", "Перед большой заявкой", "Перед заявкой заданного объёма" });
+            _buyTotalVolume = CreateParameter("Суммарный объём покупки (лоты или % портфеля)", 100.0m, 0.0001m, 100000.0m, 0.0001m);
+            _buyVolumeMode = CreateParameter("Режим объёма покупки", "% от стоимости портфеля", new[] { "Фиксированный", "% от стоимости портфеля", "Максимум без маржи" });
+            _specifiedOrderVolume = CreateParameter("Объём чужой заявки (лоты)", 1000.0m, 0.0m, 100000000.0m, 1.0m);
+            _levelVolumePercent = CreateParameter("Процент от объёма уровня", 100.0m, 1.0m, 1000.0m, 1.0m);
+            _sellVolumeMode = CreateParameter("Режим объёма продажи", "% от бумаг в портфеле", new[] { "% от бумаг в портфеле", "% от всего портфеля" });
+            _sellPercent = CreateParameter("Процент продажи", 100.0m, 1.0m, 100.0m, 1.0m);
+            _wallMinVolume = CreateParameter("Мин. объём стены", 100000.0m, 0.0m, 100000000.0m, 1.0m);
+            _wallMedianFactor = CreateParameter("Превышение над медианой, раз", 3.0m, 0.0m, 1000.0m, 0.1m);
+            _confirmTicks = CreateParameter("Проверка моргания, тиков", 3, 1, 20, 1);
+
+            _diagnostics = CreateParameter("Диагностика (5 минут)", "Off", new[] { "Off", "On" });
+            _operationTimer = new System.Threading.Timer(CheckOperationTimer, null, 1000, 1000);
+
+            _tab.MarketDepthUpdateEvent += _tab_MarketDepthUpdateEvent;
+            _tab.OrderUpdateEvent += _tab_OrderUpdateEvent;
+            DeleteEvent += MarketMakerStakan3_DeleteEvent;
+        }
+
+        public override string GetNameStrategyType()
+        {
+            return "MarketMakerStakan3";
+        }
+
+        public override void ShowIndividualSettingsDialog()
+        {
+        }
+
+        private void MarketMakerStakan3_DeleteEvent()
+        {
+            lock (_planLock)
+            {
+                _deleted = true;
+                _operationTimer.Dispose();
+                _tab.MarketDepthUpdateEvent -= _tab_MarketDepthUpdateEvent;
+                _tab.OrderUpdateEvent -= _tab_OrderUpdateEvent;
+            }
+        }
+
+        private class PlanOrder
+        {
+            public Side Side;
+            public decimal Price;
+            public decimal Volume;
+        }
+
+        private void _tab_MarketDepthUpdateEvent(MarketDepth marketDepth)
+        {
+            try
+            {
+                if (StartProgram == StartProgram.IsOsOptimizer)
+                {
+                    return;
+                }
+
+                lock (_planLock)
+                {
+                    _eventNumber++;
+                    CheckOperationTimeout();
+                    if (_deleted || _insideCommand || _executionError)
+                    {
+                        return;
+                    }
+
+                    if (_regime.ValueString == "On")
+                    {
+                        if (_onTime == DateTime.MinValue)
+                        {
+                            _onTime = DateTime.Now;
+                            SendNewLogMessage("Робот включён в режим \"On\"", LogMessageType.Trade);
+                        }
+
+                        if (!_portfolioTimingLogged)
+                        {
+                            Portfolio portfolio = _tab.Portfolio;
+
+                            if (portfolio != null &&
+                                (portfolio.ValueCurrent > 0 ||
+                                 (portfolio.GetPositionOnBoard() != null &&
+                                  portfolio.GetPositionOnBoard().Count > 0)))
+                            {
+                                _portfolioTimingLogged = true;
+                                SendNewLogMessage("Портфель получен через " +
+                                                  (DateTime.Now - _onTime).TotalSeconds.ToString("F1") +
+                                                  " сек после включения", LogMessageType.Trade);
+                            }
+                        }
+                    }
+
+                    if (_regime.ValueString == "Off")
+                    {
+                        CancelAllActiveOrders(!_ordersClearedInOffMode);
+                        _ordersClearedInOffMode = true;
+                        _sellForeignBasis.Clear();
+                        _sellPapersBase = -1m;
+                        _sellPapersHistory.Clear();
+                        return;
+                    }
+
+                    if (_operation != null || HasRestoredActiveOrders())
+                    {
+                        return;
+                    }
+
+                    _ordersClearedInOffMode = false;
+
+                    if (StartProgram == StartProgram.IsOsTrader &&
+                        _lastProcessTime + MinProcessInterval > DateTime.Now)
+                    {
+                        return;
+                    }
+
+                    _lastProcessTime = DateTime.Now;
+
+                    if (marketDepth == null)
+                    {
+                        return;
+                    }
+
+                    MarketDepth md = marketDepth.GetCopy();
+
+                    if (md.Asks == null || md.Asks.Count == 0 ||
+                        md.Bids == null || md.Bids.Count == 0)
+                    {
+                        return;
+                    }
+
+                    if (_tab.Security == null)
+                    {
+                        return;
+                    }
+
+                    if (!IsValidDepth(md))
+                    {
+                        return;
+                    }
+
+                    if (_tab.Security.VolumeStep <= 0 || _tab.Security.PriceStep <= 0)
+                    {
+                        SendNewLogMessage("VolumeStep бумаги равен нулю — объём заявки округлить невозможно", LogMessageType.Error);
+                        return;
+                    }
+
+                    CaptureBalances();
+                    List<Order> activeOrders = GetMyActiveOrders();
+                    List<PlanOrder> newPlan = BuildPlan(md, activeOrders);
+                    TracePlan(md, activeOrders, newPlan);
+
+                    if (OrdersMatchPlan(activeOrders, newPlan))
+                    {
+                        return;
+                    }
+
+                    ApplyPlan(newPlan, activeOrders, md);
+                }
+            }
+            catch (Exception e)
+            {
+                lock (_planLock)
+                {
+                    SetExecutionError("Ошибка в обработке стакана: " + e);
+                }
+            }
+        }
+
+        private void _tab_OrderUpdateEvent(Order order)
+        {
+            if (order == null)
+            {
+                return;
+            }
+
+            lock (_planLock)
+            {
+                _eventNumber++;
+                Order previous;
+                if (!_ownOrders.TryGetValue(order.NumberUser, out previous))
+                {
+                    if (_operation == null || _operation.Kind != "Place" ||
+                        (_operation.NumberUser != 0 && _operation.NumberUser != order.NumberUser) ||
+                        _operation.Side != order.Side || _operation.TargetPrice != order.Price)
+                    {
+                        return;
+                    }
+
+                    _operation.NumberUser = order.NumberUser;
+                }
+
+                RememberOrder(order);
+                if (IsTerminal(order.State))
+                {
+                    _lastTerminalTime = DateTime.UtcNow;
+                }
+
+                Trace("OrderUpdate", order);
+                if (_operation != null && _operation.NumberUser == order.NumberUser)
+                {
+                    Order current = _ownOrders[order.NumberUser];
+                    bool terminal = IsTerminal(current.State);
+                    if (terminal ||
+                        (_operation.Kind == "Place" && (current.State == OrderStateType.Active || current.State == OrderStateType.Partial)) ||
+                        (_operation.Kind == "Change" && current.Price == _operation.TargetPrice &&
+                         (current.State == OrderStateType.Active || current.State == OrderStateType.Partial)))
+                    {
+                        _operation = null;
+                    }
+                }
+
+                if (order.State == OrderStateType.Fail)
+                {
+                    SetExecutionError("Биржа отклонила собственную заявку " + order.NumberUser);
+                }
+            }
+        }
+
+        private void CaptureBalances()
+        {
+            Portfolio portfolio = _tab.Portfolio;
+            _snapshotPortfolioReady = portfolio != null;
+            _snapshotPortfolioValue = portfolio == null ? 0 : portfolio.ValueCurrent;
+            _snapshotFreeMoney = portfolio == null ? 0 : GetFreeMoney(portfolio);
+            _snapshotFreeSecurity = 0;
+            List<PositionOnBoard> balances = portfolio == null ? null : portfolio.GetPositionOnBoard();
+            if (balances != null)
+            {
+                for (int i = 0; i < balances.Count; i++)
+                {
+                    if (balances[i].SecurityNameCode == _tab.Security.Name)
+                    {
+                        _snapshotFreeSecurity = Math.Max(0, balances[i].ValueCurrent - balances[i].ValueBlocked);
+                        break;
+                    }
+                }
+            }
+        }
+
+        private bool IsTerminal(OrderStateType state)
+        {
+            return state == OrderStateType.Cancel || state == OrderStateType.Done || state == OrderStateType.Fail;
+        }
+
+        private void RememberOrder(Order order)
+        {
+            Order previous;
+            decimal executed = order.VolumeExecute;
+            OrderStateType state = order.State;
+            if (_ownOrders.TryGetValue(order.NumberUser, out previous))
+            {
+                executed = Math.Max(executed, previous.VolumeExecute);
+                decimal canonicalPrice = _tab.Security == null ? order.Price : RoundPrice(order.Price, order.Side);
+                if (!IsTerminal(previous.State) && !IsTerminal(state) && canonicalPrice != previous.Price &&
+                    (_operation == null || _operation.Kind != "Change" ||
+                     _operation.NumberUser != order.NumberUser || _operation.TargetPrice != canonicalPrice))
+                {
+                    SetExecutionError("Цена собственной заявки изменилась без ожидаемой операции: " + order.NumberUser);
+                }
+
+                if (IsTerminal(previous.State))
+                {
+                    if (executed > previous.VolumeExecute || (state == OrderStateType.Done && previous.State == OrderStateType.Cancel))
+                    {
+                        SetExecutionError("Позднее исполнение после терминального состояния заявки " + order.NumberUser);
+                    }
+
+                    state = previous.State;
+                }
+            }
+
+            _ownOrders[order.NumberUser] = new Order
+            {
+                NumberUser = order.NumberUser,
+                NumberMarket = order.NumberMarket,
+                Side = order.Side,
+                Price = _tab.Security == null ? order.Price : RoundPrice(order.Price, order.Side),
+                Volume = order.Volume,
+                VolumeExecute = executed,
+                State = state
+            };
+        }
+
+        private bool CanSendOperation()
+        {
+            CheckOperationTimeout();
+            return !_deleted && !_executionError && !_insideCommand && _operation == null;
+        }
+
+        private void CheckOperationTimer(object state)
+        {
+            lock (_planLock)
+            {
+                if (_deleted || StartProgram != StartProgram.IsOsTrader)
+                {
+                    return;
+                }
+
+                try
+                {
+                    CheckOperationTimeout();
+                    if (_regime.ValueString == "Off" && CanSendOperation())
+                    {
+                        CancelAllActiveOrders(false);
+                    }
+                }
+                catch (Exception error)
+                {
+                    SetExecutionError("Таймер исполнения: " + error);
+                }
+            }
+        }
+
+        private void CheckOperationTimeout()
+        {
+            if (_operation != null && DateTime.UtcNow - _operation.Time >= CancelRetryTimeout)
+            {
+                SetExecutionError("Таймаут " + _operation.Kind + " заявки " + _operation.NumberUser + "; требуется ручная сверка и перезапуск робота");
+            }
+        }
+
+        private void SetExecutionError(string reason)
+        {
+            if (!_executionError)
+            {
+                _executionError = true;
+                SendNewLogMessage("Execution Error: " + reason, LogMessageType.Error);
+            }
+        }
+
+        private void CancelOrderSafe(Order order)
+        {
+            if (order == null || !CanSendOperation() ||
+                (order.State != OrderStateType.Active && order.State != OrderStateType.Partial))
+            {
+                return;
+            }
+
+            order = FindSourceOrder(order.NumberUser);
+            if (order == null || (order.State != OrderStateType.Active && order.State != OrderStateType.Partial))
+            {
+                return;
+            }
+
+            _commandsSent++;
+            _operation = new ExecutionOperation { Kind = "Cancel", NumberUser = order.NumberUser, Side = order.Side, Time = DateTime.UtcNow };
+            _lastOwnOrdersChange = DateTime.Now;
+            _insideCommand = true;
+            try
+            {
+                Trace("Cancel request: plan mismatch or Off", order);
+                _tab.CloseOrder(order);
+                Trace("Cancel call returned", order);
+            }
+            catch (Exception error)
+            {
+                SetExecutionError("Cancel: " + error);
+            }
+            finally
+            {
+                _insideCommand = false;
+            }
+        }
+
+        private void PlaceOrderSafe(Side side, decimal volume, decimal price)
+        {
+            if (_regime.ValueString != "On" || !CanSendOperation() || volume <= 0 || price <= 0)
+            {
+                return;
+            }
+
+            if (StartProgram == StartProgram.IsOsTrader && DateTime.UtcNow - _lastTerminalTime < OwnOrdersSettleTime)
+            {
+                return;
+            }
+
+            _commandsSent++;
+            _operation = new ExecutionOperation { Kind = "Place", Side = side, TargetPrice = price, Time = DateTime.UtcNow };
+            ExecutionOperation operation = _operation;
+            _lastOwnOrdersChange = DateTime.Now;
+            _insideCommand = true;
+            try
+            {
+                Trace("Place request: plan mismatch " + side + " " + price + " volume=" + volume, null);
+                Position position = side == Side.Buy ? _tab.BuyAtLimit(volume, price) : _tab.SellAtLimit(volume, price);
+                if (position == null || position.OpenOrders == null || position.OpenOrders.Count != 1)
+                {
+                    SetExecutionError("Place не вернул однозначный идентификатор заявки");
+                    return;
+                }
+
+                Order order = position.OpenOrders[0];
+                if (operation.NumberUser != 0 && operation.NumberUser != order.NumberUser)
+                {
+                    SetExecutionError("Place: идентификатор ответа не совпадает с событием");
+                    return;
+                }
+
+                operation.NumberUser = order.NumberUser;
+                RememberOrder(order);
+                Trace("Place call returned", order);
+                if (ReferenceEquals(_operation, operation) &&
+                    (order.State == OrderStateType.Active || order.State == OrderStateType.Partial || IsTerminal(order.State)))
+                {
+                    _operation = null;
+                }
+
+                if (order.State == OrderStateType.Fail)
+                {
+                    SetExecutionError("Place отклонён");
+                }
+            }
+            catch (Exception error)
+            {
+                SetExecutionError("Place: " + error);
+            }
+            finally
+            {
+                _insideCommand = false;
+            }
+        }
+
+        private Order FindSourceOrder(int numberUser)
+        {
+            List<Position> positions = _tab.PositionsAll;
+            if (positions != null)
+            {
+                for (int i = 0; i < positions.Count; i++)
+                {
+                    if (_restoredPositionNumbers.Contains(positions[i].Number) || positions[i].OpenOrders == null)
+                    {
+                        continue;
+                    }
+
+                    for (int j = 0; j < positions[i].OpenOrders.Count; j++)
+                    {
+                        if (positions[i].OpenOrders[j].NumberUser == numberUser)
+                        {
+                            return positions[i].OpenOrders[j];
+                        }
+                    }
+                }
+            }
+
+            SetExecutionError("Не найдена исходная заявка " + numberUser);
+            return null;
+        }
+
+        private bool HasRestoredActiveOrders()
+        {
+            List<Position> positions = _tab.PositionsAll;
+            if (positions == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < positions.Count; i++)
+            {
+                if (!_restoredPositionNumbers.Contains(positions[i].Number) || positions[i].OpenOrders == null)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < positions[i].OpenOrders.Count; j++)
+                {
+                    if (!IsTerminal(positions[i].OpenOrders[j].State))
+                    {
+                        SetExecutionError("Найдены старые неподтверждённые заявки; требуется ручная сверка");
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsValidDepth(MarketDepth md)
+        {
+            for (int side = 0; side < 2; side++)
+            {
+                List<MarketDepthLevel> levels = side == 0 ? md.Bids : md.Asks;
+                for (int i = 0; i < levels.Count; i++)
+                {
+                    double price = levels[i].Price;
+                    double volume = side == 0 ? levels[i].Bid : levels[i].Ask;
+                    if (double.IsNaN(price) || double.IsInfinity(price) || price <= 0 ||
+                        double.IsNaN(volume) || double.IsInfinity(volume) || volume < 0 ||
+                        (i > 0 && (side == 0 ? price >= levels[i - 1].Price : price <= levels[i - 1].Price)))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return md.Bids[0].Price < md.Asks[0].Price;
+        }
+
+        private void Trace(string message, Order order)
+        {
+            if (_diagnostics.ValueString != "On")
+            {
+                _diagnosticsStarted = DateTime.MinValue;
+                return;
+            }
+
+            if (_diagnosticsStarted == DateTime.MinValue)
+            {
+                _diagnosticsStarted = DateTime.UtcNow;
+            }
+
+            if (DateTime.UtcNow - _diagnosticsStarted > TimeSpan.FromMinutes(5))
+            {
+                return;
+            }
+
+            if (order != null)
+            {
+                message += " user=" + order.NumberUser + " market=" + order.NumberMarket +
+                    " state=" + order.State + " price=" + order.Price + " executed=" + order.VolumeExecute +
+                    " rest=" + Math.Max(0, order.Volume - order.VolumeExecute);
+            }
+
+            SendNewLogMessage("MM3DIAG " + DateTime.UtcNow.ToString("O") + " #" + _eventNumber + " " + message, LogMessageType.Trade);
+        }
+
+        private void TracePlan(MarketDepth md, List<Order> orders, List<PlanOrder> plan)
+        {
+            if (_diagnostics.ValueString != "On")
+            {
+                _diagnosticsStarted = DateTime.MinValue;
+                return;
+            }
+
+            if (_diagnosticsStarted != DateTime.MinValue && DateTime.UtcNow - _diagnosticsStarted > TimeSpan.FromMinutes(5))
+            {
+                return;
+            }
+
+            string detail = "MarketDepth bid=" + md.Bids[0].Price + " ask=" + md.Asks[0].Price + " sellBase=" + _sellPapersBase +
+                " snapshotPortfolio=" + _snapshotPortfolioValue + " freeMoney=" + _snapshotFreeMoney + " freeSecurity=" + _snapshotFreeSecurity;
+            for (int sideIndex = 0; sideIndex < 2; sideIndex++)
+            {
+                Side side = sideIndex == 0 ? Side.Buy : Side.Sell;
+                List<MarketDepthLevel> levels = side == Side.Buy ? md.Bids : md.Asks;
+                List<decimal> foreign = GetForeignVolumes(levels, side, orders);
+                for (int i = 0; i < levels.Count; i++)
+                {
+                    decimal price = RoundPrice(Convert.ToDecimal(levels[i].Price), side);
+                    decimal basis;
+                    detail += " level=" + side + ":" + levels[i].Price + ":canonical=" + price + ":foreign=" + foreign[i];
+                    if (side == Side.Sell && _sellForeignBasis.TryGetValue(price, out basis))
+                    {
+                        detail += ":basis=" + basis;
+                    }
+                }
+            }
+            Portfolio portfolio = _tab.Portfolio;
+            if (portfolio != null)
+            {
+                detail += " portfolio=" + portfolio.ValueCurrent + " blocked=" + portfolio.ValueBlocked;
+                List<PositionOnBoard> balances = portfolio.GetPositionOnBoard();
+                if (balances != null)
+                {
+                    for (int i = 0; i < balances.Count; i++)
+                    {
+                        detail += " balance[" + balances[i].SecurityNameCode + "]=" + balances[i].ValueCurrent + "/" + balances[i].ValueBlocked;
+                    }
+                }
+            }
+
+            for (int i = 0; i < orders.Count; i++)
+            {
+                detail += " own[" + orders[i].NumberUser + "]=" + orders[i].Side + ":" + orders[i].Price + ":" + (orders[i].Volume - orders[i].VolumeExecute);
+            }
+
+            for (int i = 0; i < plan.Count; i++)
+            {
+                detail += " plan=" + plan[i].Side + ":" + plan[i].Price + ":" + plan[i].Volume;
+            }
+
+            Trace(detail, null);
+        }
+
+        private List<PlanOrder> BuildPlan(MarketDepth md, List<Order> activeOrders)
+        {
+            List<PlanOrder> plan = new List<PlanOrder>();
+
+            BuildBuyPlan(md, plan, activeOrders);
+            BuildSellPlan(md, plan, activeOrders);
+
+            return plan;
+        }
+
+        private void BuildBuyPlan(MarketDepth md, List<PlanOrder> plan, List<Order> activeOrders)
+        {
+            if (_buyMode.ValueString != "Перед большой заявкой")
+            {
+                _wallCandidatePrice = 0;
+                _wallCandidateCount = 0;
+                _wallNotFoundLogged = false;
+            }
+
+            decimal totalBuyVolume = GetBuyTotalVolume(md, activeOrders);
+
+            if (totalBuyVolume <= 0)
+            {
+                return;
+            }
+
+            List<decimal> foreignVolumes = GetForeignVolumes(md.Bids, Side.Buy, activeOrders);
+
+            if (_buyMode.ValueString == "Один уровень (макс. объём)")
+            {
+                int bestIndex = -1;
+                decimal bestVolume = -1m;
+
+                for (int i = 0; i < foreignVolumes.Count; i++)
+                {
+                    if (foreignVolumes[i] > bestVolume)
+                    {
+                        bestVolume = foreignVolumes[i];
+                        bestIndex = i;
+                    }
+                }
+
+                if (bestIndex < 0)
+                {
+                    return;
+                }
+
+                decimal price = RoundPrice(Convert.ToDecimal(md.Bids[bestIndex].Price), Side.Buy);
+                decimal volume = RoundVolume(totalBuyVolume);
+
+                if (price > 0 && volume > 0)
+                {
+                    plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
+                }
+            }
+            else if (_buyMode.ValueString == "Перед большой заявкой")
+            {
+                BuildWallBuyPlan(md, plan, totalBuyVolume, foreignVolumes);
+            }
+            else if (_buyMode.ValueString == "Перед заявкой заданного объёма")
+            {
+                for (int i = 0; i < foreignVolumes.Count; i++)
+                {
+                    if (foreignVolumes[i] < _specifiedOrderVolume.ValueDecimal)
+                    {
+                        continue;
+                    }
+
+                    if (md.Asks == null || md.Asks.Count == 0)
+                    {
+                        return;
+                    }
+
+                    decimal bestAsk = Convert.ToDecimal(md.Asks[0].Price);
+                    decimal orderPrice = Convert.ToDecimal(md.Bids[i].Price) + _tab.Security.PriceStep;
+                    decimal price = RoundPrice(orderPrice, Side.Buy);
+                    decimal volume = RoundVolume(totalBuyVolume);
+
+                    if (price > 0 && price < bestAsk && volume > 0)
+                    {
+                        plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
+                    }
+
+                    return;
+                }
+            }
+            else
+            {
+                decimal rest = totalBuyVolume;
+
+                for (int i = 0; i < md.Bids.Count && rest > 0; i++)
+                {
+                    decimal price = RoundPrice(Convert.ToDecimal(md.Bids[i].Price), Side.Buy);
+
+                    if (price <= 0)
+                    {
+                        continue;
+                    }
+
+                    decimal want = _levelVolumePercent.ValueDecimal / 100m * foreignVolumes[i];
+
+                    if (want > rest)
+                    {
+                        want = rest;
+                    }
+
+                    decimal volume = RoundVolumeDown(want);
+
+                    if (volume <= 0)
+                    {
+                        continue;
+                    }
+
+                    plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
+                    rest -= volume;
+                }
+
+                ApplyStandingOrdersFloor(plan, activeOrders, Side.Buy);
+            }
+        }
+
+        private void BuildWallBuyPlan(MarketDepth md, List<PlanOrder> plan, decimal totalBuyVolume, List<decimal> foreignVolumes)
+        {
+            decimal wallPrice = FindWallPrice(foreignVolumes, md);
+
+            if (wallPrice <= 0)
+            {
+                _wallCandidatePrice = 0;
+                _wallCandidateCount = 0;
+
+                if (!_wallNotFoundLogged)
+                {
+                    _wallNotFoundLogged = true;
+                    SendNewLogMessage("Режим \"Перед большой заявкой\": стена не найдена", LogMessageType.Trade);
+                }
+
+                return;
+            }
+
+            _wallNotFoundLogged = false;
+
+            if (wallPrice == _wallCandidatePrice)
+            {
+                _wallCandidateCount++;
+            }
+            else
+            {
+                _wallCandidatePrice = wallPrice;
+                _wallCandidateCount = 1;
+            }
+
+            if (_wallCandidateCount < _confirmTicks.ValueInt)
+            {
+                return;
+            }
+
+            if (md.Asks == null || md.Asks.Count == 0)
+            {
+                return;
+            }
+
+            decimal bestAsk = Convert.ToDecimal(md.Asks[0].Price);
+            decimal price = RoundPrice(wallPrice + _tab.Security.PriceStep, Side.Buy);
+
+            if (price <= 0 || price >= bestAsk)
+            {
+                return;
+            }
+
+            decimal volume = RoundVolume(totalBuyVolume);
+
+            if (volume > 0)
+            {
+                plan.Add(new PlanOrder { Side = Side.Buy, Price = price, Volume = volume });
+            }
+        }
+
+        private decimal FindWallPrice(List<decimal> foreignVolumes, MarketDepth md)
+        {
+            if (md.Bids == null || md.Bids.Count < 2)
+            {
+                return 0;
+            }
+
+            decimal median = MedianVolumes(foreignVolumes);
+
+            if (median <= 0)
+            {
+                return 0;
+            }
+
+            for (int i = 0; i < foreignVolumes.Count; i++)
+            {
+                decimal volume = foreignVolumes[i];
+
+                if (volume >= _wallMinVolume.ValueDecimal &&
+                    volume >= _wallMedianFactor.ValueDecimal * median)
+                {
+                    return Convert.ToDecimal(md.Bids[i].Price);
+                }
+            }
+
+            return 0;
+        }
+
+        private decimal MedianVolumes(List<decimal> volumes)
+        {
+            if (volumes == null || volumes.Count < 2)
+            {
+                return 0;
+            }
+
+            List<decimal> sorted = new List<decimal>(volumes);
+            sorted.Sort();
+
+            int count = sorted.Count;
+
+            if (count % 2 == 1)
+            {
+                return sorted[count / 2];
+            }
+
+            return (sorted[count / 2 - 1] + sorted[count / 2]) / 2m;
+        }
+
+        private void BuildSellPlan(MarketDepth md, List<PlanOrder> plan, List<Order> activeOrders)
+        {
+            decimal rest = GetSellPlanVolume(md, activeOrders);
+
+            if (rest <= 0)
+            {
+                return;
+            }
+
+            List<decimal> foreignVolumes = GetForeignVolumes(md.Asks, Side.Sell, activeOrders);
+
+            _sellPapersHistory.Enqueue(rest);
+
+            while (_sellPapersHistory.Count > _confirmTicks.ValueInt)
+            {
+                _sellPapersHistory.Dequeue();
+            }
+
+            decimal papersBase = decimal.MaxValue;
+
+            foreach (decimal value in _sellPapersHistory)
+            {
+                if (value < papersBase)
+                {
+                    papersBase = value;
+                }
+            }
+
+            if (_sellPapersBase != papersBase)
+            {
+                _sellPapersBase = papersBase;
+                _sellForeignBasis.Clear();
+            }
+
+            rest = _sellPapersBase;
+
+            Dictionary<decimal, decimal> newBasis = new Dictionary<decimal, decimal>();
+
+            for (int i = 0; i < md.Asks.Count && rest > 0; i++)
+            {
+                decimal price = RoundPrice(Convert.ToDecimal(md.Asks[i].Price), Side.Sell);
+
+                if (price <= 0)
+                {
+                    continue;
+                }
+
+                decimal basis = foreignVolumes[i];
+                decimal oldBasis;
+
+                if (_sellForeignBasis.TryGetValue(price, out oldBasis) && oldBasis < basis)
+                {
+                    basis = oldBasis;
+                }
+
+                newBasis[price] = basis;
+
+                decimal want = _levelVolumePercent.ValueDecimal / 100m * basis;
+
+                if (want > rest)
+                {
+                    want = rest;
+                }
+
+                decimal volume = RoundVolumeDown(want);
+
+                if (volume <= 0)
+                {
+                    continue;
+                }
+
+                plan.Add(new PlanOrder { Side = Side.Sell, Price = price, Volume = volume });
+                rest -= volume;
+            }
+
+            _sellForeignBasis.Clear();
+
+            foreach (KeyValuePair<decimal, decimal> pair in newBasis)
+            {
+                _sellForeignBasis[pair.Key] = pair.Value;
+            }
+
+            ApplyStandingOrdersFloor(plan, activeOrders, Side.Sell);
+        }
+
+        private void ApplyStandingOrdersFloor(List<PlanOrder> plan, List<Order> activeOrders, Side side)
+        {
+            if (_lastOwnOrdersChange + OwnOrdersSettleTime < DateTime.Now)
+            {
+                return;
+            }
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                Order order = activeOrders[i];
+
+                if (order.Side != side)
+                {
+                    continue;
+                }
+
+                decimal myRest = order.Volume - order.VolumeExecute;
+
+                if (myRest <= 0)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < plan.Count; j++)
+                {
+                    if (plan[j].Side == side && plan[j].Price == order.Price)
+                    {
+                        if (plan[j].Volume < myRest)
+                        {
+                            plan[j].Volume = myRest;
+                        }
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        private decimal GetSellPlanVolume(MarketDepth md, List<Order> activeOrders)
+        {
+            if (_sellVolumeMode.ValueString != "% от бумаг в портфеле")
+            {
+                return GetSellTotalVolume(md);
+            }
+
+            decimal free = GetSellTotalVolume(md);
+            decimal reserved = 0;
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                if (activeOrders[i].Side == Side.Sell)
+                {
+                    reserved += activeOrders[i].Volume - activeOrders[i].VolumeExecute;
+                }
+            }
+
+            return free + reserved * _sellPercent.ValueDecimal / 100m;
+        }
+
+        private decimal GetBuyTotalVolume(MarketDepth md, List<Order> activeOrders)
+        {
+            if (_buyVolumeMode.ValueString == "Фиксированный")
+            {
+                return _buyTotalVolume.ValueDecimal;
+            }
+
+            if (!_snapshotPortfolioReady)
+            {
+                LogPortfolioUnavailable("Портфель недоступен — объём покупки не считаем");
+                return 0;
+            }
+
+            decimal bestBid = Convert.ToDecimal(md.Bids[0].Price);
+
+            if (bestBid <= 0)
+            {
+                return 0;
+            }
+
+            decimal moneyForBuy;
+
+            if (_buyVolumeMode.ValueString == "% от стоимости портфеля")
+            {
+                moneyForBuy = _snapshotPortfolioValue * _buyTotalVolume.ValueDecimal / 100m;
+
+                if (moneyForBuy <= 0)
+                {
+                    return 0;
+                }
+
+                return moneyForBuy / bestBid;
+            }
+
+            moneyForBuy = _snapshotFreeMoney;
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                if (activeOrders[i].Side == Side.Buy)
+                {
+                    moneyForBuy += Math.Max(0, activeOrders[i].Volume - activeOrders[i].VolumeExecute) * activeOrders[i].Price;
+                }
+            }
+
+            if (moneyForBuy <= 0)
+            {
+                return 0;
+            }
+
+            return moneyForBuy / bestBid;
+        }
+
+        private decimal GetFreeMoney(Portfolio portfolio)
+        {
+            List<PositionOnBoard> positionsOnBoard = portfolio.GetPositionOnBoard();
+
+            if (positionsOnBoard != null)
+            {
+                for (int i = 0; i < positionsOnBoard.Count; i++)
+                {
+                    if (positionsOnBoard[i].SecurityNameCode == "rub")
+                    {
+                        return positionsOnBoard[i].ValueCurrent;
+                    }
+                }
+            }
+
+            decimal free = portfolio.ValueCurrent - portfolio.ValueBlocked;
+
+            if (free < 0)
+            {
+                free = 0;
+            }
+
+            return free;
+        }
+
+        private decimal GetSellTotalVolume(MarketDepth md)
+        {
+            if (!_snapshotPortfolioReady)
+            {
+                LogPortfolioUnavailable("Портфель недоступен — объём продажи не считаем");
+                return 0;
+            }
+
+            if (_sellVolumeMode.ValueString == "% от бумаг в портфеле")
+            {
+                return _snapshotFreeSecurity * _sellPercent.ValueDecimal / 100m;
+            }
+
+            decimal bestAsk = Convert.ToDecimal(md.Asks[0].Price);
+            return bestAsk <= 0 ? 0 : _snapshotPortfolioValue * _sellPercent.ValueDecimal / 100m / bestAsk;
+        }
+
+        private void LogPortfolioUnavailable(string message)
+        {
+            if (_lastPortfolioErrorLog + PortfolioErrorLogInterval > DateTime.Now)
+            {
+                return;
+            }
+
+            _lastPortfolioErrorLog = DateTime.Now;
+            SendNewLogMessage(message, LogMessageType.Error);
+        }
+
+        private List<decimal> GetForeignVolumes(List<MarketDepthLevel> levels, Side side, List<Order> myActiveOrders)
+        {
+            List<decimal> result = new List<decimal>();
+
+            for (int i = 0; i < levels.Count; i++)
+            {
+                decimal foreign = side == Side.Buy
+                    ? Convert.ToDecimal(levels[i].Bid)
+                    : Convert.ToDecimal(levels[i].Ask);
+
+                result.Add(foreign);
+            }
+
+            for (int i = 0; i < myActiveOrders.Count; i++)
+            {
+                Order order = myActiveOrders[i];
+
+                if (order.Side != side || (order.State != OrderStateType.Active && order.State != OrderStateType.Partial))
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < levels.Count; j++)
+                {
+                    if (RoundPrice(Convert.ToDecimal(levels[j].Price), side) == RoundPrice(order.Price, side))
+                    {
+                        decimal myRest = order.Volume - order.VolumeExecute;
+                        result[j] -= myRest;
+
+                        if (result[j] < 0)
+                        {
+                            result[j] = 0;
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private void ApplyPlan(List<PlanOrder> plan, List<Order> activeOrders, MarketDepth md)
+        {
+            long before = _commandsSent;
+            ApplyPlanSide(plan, activeOrders, Side.Buy, md);
+            if (_commandsSent == before && _operation == null && !_executionError)
+            {
+                ApplyPlanSide(plan, activeOrders, Side.Sell, md);
+            }
+        }
+
+        private void ApplyPlanSide(List<PlanOrder> plan, List<Order> activeOrders, Side side, MarketDepth md)
+        {
+            List<PlanOrder> planSide = new List<PlanOrder>();
+
+            for (int j = 0; j < plan.Count; j++)
+            {
+                if (plan[j].Side == side)
+                {
+                    planSide.Add(plan[j]);
+                }
+            }
+
+            List<PlanOrder> mySide = new List<PlanOrder>();
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                Order order = activeOrders[i];
+
+                if (order.Side != side)
+                {
+                    continue;
+                }
+
+                decimal rest = order.Volume - order.VolumeExecute;
+
+                if (rest <= 0)
+                {
+                    continue;
+                }
+
+                bool merged = false;
+
+                for (int m = 0; m < mySide.Count; m++)
+                {
+                    if (mySide[m].Price == order.Price)
+                    {
+                        mySide[m].Volume += rest;
+                        merged = true;
+                        break;
+                    }
+                }
+
+                if (!merged)
+                {
+                    mySide.Add(new PlanOrder { Side = side, Price = order.Price, Volume = rest });
+                }
+            }
+
+            mySide.Sort(delegate (PlanOrder a, PlanOrder b)
+            {
+                if (side == Side.Sell)
+                {
+                    return a.Price.CompareTo(b.Price);
+                }
+
+                return b.Price.CompareTo(a.Price);
+            });
+
+            int k = 0;
+
+            while (k < mySide.Count && k < planSide.Count &&
+                   mySide[k].Price == planSide[k].Price &&
+                   VolumesMatch(planSide[k].Volume, mySide[k].Volume, side))
+            {
+                k++;
+            }
+
+            if (k == mySide.Count && k == planSide.Count)
+            {
+                return;
+            }
+
+            if (k == 0 && planSide.Count == 1 && mySide.Count == 1)
+            {
+                Order singleOrder = FindSingleActiveOrder(activeOrders, side);
+
+                if (singleOrder != null &&
+                    singleOrder.Price != planSide[0].Price &&
+                    VolumesMatch(planSide[0].Volume, singleOrder.Volume - singleOrder.VolumeExecute, side) &&
+                    TryChangeOrderPrice(singleOrder, planSide[0].Price))
+                {
+                    return;
+                }
+            }
+
+            List<decimal> cancelPrices = new List<decimal>();
+
+            for (int i = k; i < mySide.Count; i++)
+            {
+                cancelPrices.Add(mySide[i].Price);
+            }
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                Order order = activeOrders[i];
+
+                if (order.Side != side || !cancelPrices.Contains(order.Price))
+                {
+                    continue;
+                }
+
+                decimal restVolume = order.Volume - order.VolumeExecute;
+
+                if (restVolume <= 0)
+                {
+                    continue;
+                }
+
+                SendNewLogMessage("Снимаем заявку " + order.Side + " " + order.Price +
+                                  " объём " + restVolume + " (расходится с планом, позиция " + k + ")", LogMessageType.Trade);
+                CancelOrderSafe(order);
+                return;
+            }
+
+            if (k >= planSide.Count)
+            {
+                return;
+            }
+
+            decimal? budget = null;
+            decimal reserved = 0;
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                if (activeOrders[i].Side == side)
+                {
+                    reserved += activeOrders[i].Volume - activeOrders[i].VolumeExecute;
+                }
+            }
+
+            for (int j = k; j < planSide.Count; j++)
+            {
+                decimal volumeToPlace = planSide[j].Volume;
+
+                if (side == Side.Sell)
+                {
+                    if (budget == null)
+                    {
+                        budget = GetSellPlanVolume(md, activeOrders);
+                    }
+
+                    decimal canPlace = budget.Value - reserved;
+                    if (_sellVolumeMode.ValueString == "% от бумаг в портфеле")
+                    {
+                        canPlace = Math.Min(canPlace, _snapshotFreeSecurity);
+                    }
+
+                    if (volumeToPlace > canPlace)
+                    {
+                        volumeToPlace = RoundVolumeDown(canPlace);
+                    }
+
+                    if (volumeToPlace <= 0)
+                    {
+                        SendNewLogMessage("Пропускаем заявку Sell " + planSide[j].Price +
+                                          " (нет свободных бумаг: резерв " + reserved +
+                                          ", доступно " + budget.Value + ")", LogMessageType.Trade);
+                        continue;
+                    }
+
+                    SendNewLogMessage("Выставляем заявку Sell " + planSide[j].Price +
+                                      " объём " + volumeToPlace, LogMessageType.Trade);
+                    PlaceOrderSafe(Side.Sell, volumeToPlace, planSide[j].Price);
+                    return;
+                }
+                else
+                {
+                    {
+                        if (budget == null)
+                        {
+                            budget = GetBuyTotalVolume(md, activeOrders);
+                        }
+
+                        decimal canPlace = budget.Value - reserved;
+                        if (_buyVolumeMode.ValueString == "Максимум без маржи")
+                        {
+                            canPlace = Math.Min(canPlace, _snapshotFreeMoney / planSide[j].Price);
+                        }
+
+                        if (volumeToPlace > canPlace)
+                        {
+                            volumeToPlace = RoundVolumeDown(canPlace);
+                        }
+
+                        if (volumeToPlace <= 0)
+                        {
+                            SendNewLogMessage("Пропускаем заявку Buy " + planSide[j].Price +
+                                              " (нет свободных денег: резерв " + reserved +
+                                              ", доступно " + budget.Value + ")", LogMessageType.Trade);
+                            continue;
+                        }
+                    }
+
+                    SendNewLogMessage("Выставляем заявку Buy " + planSide[j].Price +
+                                      " объём " + volumeToPlace, LogMessageType.Trade);
+                    PlaceOrderSafe(Side.Buy, volumeToPlace, planSide[j].Price);
+                    return;
+                }
+            }
+        }
+
+        private Order FindSingleActiveOrder(List<Order> activeOrders, Side side)
+        {
+            Order found = null;
+            int count = 0;
+
+            for (int i = 0; i < activeOrders.Count; i++)
+            {
+                Order order = activeOrders[i];
+
+                if (order.Side != side)
+                {
+                    continue;
+                }
+
+                if (order.Volume - order.VolumeExecute <= 0)
+                {
+                    continue;
+                }
+
+                count++;
+                found = order;
+            }
+
+            if (count == 1)
+            {
+                return found;
+            }
+
+            return null;
+        }
+
+        private bool TryChangeOrderPrice(Order order, decimal newPrice)
+        {
+            if (StartProgram != StartProgram.IsOsTrader)
+            {
+                return false;
+            }
+
+            if ((_tab.EmulatorIsOn == false && _tab.ServerIsSupportChangeOrderPrice == false) ||
+                (order.State != OrderStateType.Active && order.State != OrderStateType.Partial))
+            {
+                return false;
+            }
+
+            if (!CanSendOperation())
+            {
+                return true;
+            }
+
+            newPrice = RoundPrice(newPrice, order.Side);
+            if (newPrice <= 0 || _regime.ValueString != "On")
+            {
+                return true;
+            }
+
+            order = FindSourceOrder(order.NumberUser);
+            if (order == null || (order.State != OrderStateType.Active && order.State != OrderStateType.Partial))
+            {
+                return true;
+            }
+
+            _commandsSent++;
+            _operation = new ExecutionOperation { Kind = "Change", NumberUser = order.NumberUser, Side = order.Side, TargetPrice = newPrice, Time = DateTime.UtcNow };
+            _lastOwnOrdersChange = DateTime.Now;
+            _insideCommand = true;
+            try
+            {
+                Trace("Change request: plan mismatch target=" + newPrice, order);
+                _tab.ChangeOrderPrice(order, newPrice);
+                Trace("Change call returned", order);
+            }
+            catch (Exception error)
+            {
+                SetExecutionError("Change: " + error);
+            }
+            finally
+            {
+                _insideCommand = false;
+            }
+
+            return true;
+        }
+
+        private void CancelAllActiveOrders(bool logOrders)
+        {
+            List<Order> activeOrders = GetMyActiveOrders();
+
+            if (activeOrders.Count > 0)
+            {
+                int i = 0;
+                if (logOrders)
+                {
+                    SendNewLogMessage("Режим Off: снимаем заявку " + activeOrders[i].Side +
+                                      " " + activeOrders[i].Price, LogMessageType.Trade);
+                }
+
+                CancelOrderSafe(activeOrders[i]);
+                return;
+            }
+        }
+
+        private List<Order> GetMyActiveOrders()
+        {
+            List<Order> result = new List<Order>();
+            HashSet<int> seen = new HashSet<int>();
+
+            List<Position> positions = _tab.PositionsAll;
+
+            if (positions == null)
+            {
+                foreach (KeyValuePair<int, Order> entry in _ownOrders)
+                {
+                    if (!IsTerminal(entry.Value.State))
+                    {
+                        SetExecutionError("Журнал собственных заявок недоступен");
+                        break;
+                    }
+                }
+
+                return result;
+            }
+
+            for (int i = 0; i < positions.Count; i++)
+            {
+                if (_restoredPositionNumbers.Contains(positions[i].Number))
+                {
+                    continue;
+                }
+
+                List<Order> openOrders = positions[i].OpenOrders;
+
+                if (openOrders == null)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < openOrders.Count; j++)
+                {
+                    if (!seen.Add(openOrders[j].NumberUser))
+                    {
+                        continue;
+                    }
+
+                    OrderStateType state = openOrders[j].State;
+                    Order previous;
+                    if (_ownOrders.TryGetValue(openOrders[j].NumberUser, out previous) &&
+                        !IsTerminal(previous.State) && IsTerminal(state))
+                    {
+                        _lastTerminalTime = DateTime.UtcNow;
+                    }
+
+                    RememberOrder(openOrders[j]);
+                    if (state == OrderStateType.Fail)
+                    {
+                        SetExecutionError("Собственная заявка отклонена: " + openOrders[j].NumberUser);
+                    }
+
+                    if (!IsTerminal(state) && state != OrderStateType.Active && state != OrderStateType.Partial &&
+                        !((state == OrderStateType.Pending || state == OrderStateType.None) && positions[i].State == PositionStateType.Opening))
+                    {
+                        SetExecutionError("Неизвестное состояние собственной заявки: " + openOrders[j].NumberUser);
+                    }
+
+                    if (state == OrderStateType.Active || state == OrderStateType.Partial)
+                    {
+                        Order snapshot = _ownOrders[openOrders[j].NumberUser];
+                        if (!IsTerminal(snapshot.State))
+                        {
+                            result.Add(snapshot);
+                        }
+                        continue;
+                    }
+
+                    if ((state == OrderStateType.Pending || state == OrderStateType.None) &&
+                        positions[i].State == PositionStateType.Opening)
+                    {
+                        Order snapshot = _ownOrders[openOrders[j].NumberUser];
+                        if (!IsTerminal(snapshot.State))
+                        {
+                            result.Add(snapshot);
+                        }
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<int, Order> entry in _ownOrders)
+            {
+                if (!IsTerminal(entry.Value.State) && !seen.Contains(entry.Key))
+                {
+                    SetExecutionError("Собственная незавершённая заявка исчезла из журнала: " + entry.Key);
+                }
+            }
+
+            return result;
+        }
+
+        private decimal RoundVolume(decimal volume)
+        {
+            decimal step = _tab.Security.VolumeStep;
+
+            if (step <= 0)
+            {
+                return 0;
+            }
+
+            decimal rounded = RoundVolumeDown(volume);
+
+            if (rounded <= 0)
+            {
+                return step;
+            }
+
+            return rounded;
+        }
+
+        private decimal RoundVolumeDown(decimal volume)
+        {
+            decimal step = _tab.Security.VolumeStep;
+
+            if (step <= 0)
+            {
+                return 0;
+            }
+
+            decimal steps = Math.Floor(volume / step);
+            decimal result = steps * step;
+
+            return Math.Round(result, _tab.Security.DecimalsVolume);
+        }
+
+        private decimal RoundPrice(decimal price, Side side)
+        {
+            return _tab.RoundPrice(price, _tab.Security, side);
+        }
+
+        private bool VolumesMatch(decimal planVolume, decimal realVolume, Side side)
+        {
+            decimal step = _tab.Security.VolumeStep;
+
+            if (step <= 0)
+            {
+                step = 0.0000001m;
+            }
+
+            if (side == Side.Sell)
+            {
+                if (planVolume > realVolume)
+                {
+                    return false;
+                }
+
+                decimal shrinkTolerance = Math.Max(step, realVolume * 0.1m);
+
+                return planVolume >= realVolume - shrinkTolerance;
+            }
+
+            decimal tolerance = Math.Max(step, planVolume * 0.2m);
+
+            return realVolume >= planVolume - tolerance;
+        }
+
+        private bool OrdersMatchPlan(List<Order> orders, List<PlanOrder> plan)
+        {
+            if (orders == null || plan == null || orders.Count != plan.Count)
+            {
+                return false;
+            }
+
+            bool[] used = new bool[plan.Count];
+
+            for (int i = 0; i < orders.Count; i++)
+            {
+                Order order = orders[i];
+                decimal restVolume = order.Volume - order.VolumeExecute;
+
+                bool found = false;
+
+                for (int j = 0; j < plan.Count; j++)
+                {
+                    if (used[j])
+                    {
+                        continue;
+                    }
+
+                    if (plan[j].Side == order.Side &&
+                        plan[j].Price == RoundPrice(order.Price, order.Side) &&
+                        VolumesMatch(plan[j].Volume, restVolume, order.Side))
+                    {
+                        used[j] = true;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+}
