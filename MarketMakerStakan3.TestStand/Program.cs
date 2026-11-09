@@ -6,7 +6,7 @@ public static partial class Cases
 {
     public static readonly List<Scenario> All=new();
     static void Add(string module,string name,Action<TestContext> run) => All.Add(new(module,name,run));
-    public static void Register() { Lifecycle();Execution();Reentrancy();Planning();Budgets();Rounding();InvalidInput();Registry();Diagnostics();Properties();BrokerProperties(); }
+    public static void Register() { Lifecycle();Execution();Reentrancy();Planning();Budgets();Rounding();InvalidInput();Registry();Diagnostics();Properties();BrokerProperties();BuyOffset(); }
 }
 public sealed record CaseResult(string Module,string Name,bool Passed,double DurationMs,string Error,string Trace,long PropertyEvents,long BrokerActiveSteps,int BrokerCommands,int BrokerFills);
 public static class Program

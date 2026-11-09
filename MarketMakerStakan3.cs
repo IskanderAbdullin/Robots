@@ -25,6 +25,7 @@ namespace OsEngine.Robots.MarketMaker
         private StrategyParameterDecimal _wallMinVolume;
         private StrategyParameterDecimal _wallMedianFactor;
         private StrategyParameterInt _confirmTicks;
+        private StrategyParameterInt _buyOffsetSteps;
 
         private bool _wallNotFoundLogged;
         private decimal _wallCandidatePrice;
@@ -115,6 +116,7 @@ namespace OsEngine.Robots.MarketMaker
             _wallMinVolume = CreateParameter("Мин. объём стены", 100000.0m, 0.0m, 100000000.0m, 1.0m);
             _wallMedianFactor = CreateParameter("Превышение над медианой, раз", 3.0m, 0.0m, 1000.0m, 0.1m);
             _confirmTicks = CreateParameter("Проверка моргания, тиков", 3, 1, 20, 1);
+            _buyOffsetSteps = CreateParameter("Отступ покупки, пустых шагов цены", 0, 0, 10000, 1);
 
             _diagnostics = CreateParameter("Диагностика (5 минут)", "Off", new[] { "Off", "On" });
             _operationTimer = new System.Threading.Timer(CheckOperationTimer, null, 1000, 1000);
@@ -976,6 +978,11 @@ namespace OsEngine.Robots.MarketMaker
 
                 for (int i = 0; i < foreignVolumes.Count; i++)
                 {
+                    if (!IsBuyPriceAllowedByOffset(RoundPrice(Convert.ToDecimal(md.Bids[i].Price), Side.Buy), md))
+                    {
+                        continue;
+                    }
+
                     if (foreignVolumes[i] > bestVolume)
                     {
                         bestVolume = foreignVolumes[i];
@@ -1035,7 +1042,7 @@ namespace OsEngine.Robots.MarketMaker
                 {
                     decimal price = RoundPrice(Convert.ToDecimal(md.Bids[i].Price), Side.Buy);
 
-                    if (price <= 0)
+                    if (price <= 0 || !IsBuyPriceAllowedByOffset(price, md))
                     {
                         continue;
                     }
@@ -1060,6 +1067,20 @@ namespace OsEngine.Robots.MarketMaker
 
                 ApplyStandingOrdersFloor(plan, activeOrders, Side.Buy);
             }
+        }
+
+        private bool IsBuyPriceAllowedByOffset(decimal price, MarketDepth md)
+        {
+            int steps = Math.Max(0, _buyOffsetSteps.ValueInt);
+            if (steps == 0)
+            {
+                return true;
+            }
+
+            decimal ask = Convert.ToDecimal(md.Asks[0].Price);
+            decimal step = _tab.Security.PriceStep;
+            return price > 0 && step > 0 && price < ask &&
+                ask - price >= step && (ask - price) / ((decimal)steps + 1m) >= step;
         }
 
         private void BuildWallBuyPlan(MarketDepth md, List<PlanOrder> plan, decimal totalBuyVolume, List<decimal> foreignVolumes)
