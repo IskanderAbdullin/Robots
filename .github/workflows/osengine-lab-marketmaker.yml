@@ -1,0 +1,42 @@
+name: OsEngine Lab | MarketMakerStakan3 monitoring
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'MarketMakerStakan3.cs'
+      - 'MarketMakerStakan3.md'
+      - 'tools/osengine_lab_audit.py'
+      - '.github/workflows/osengine-lab-marketmaker.yml'
+  pull_request:
+    paths:
+      - 'MarketMakerStakan3.cs'
+      - 'MarketMakerStakan3.md'
+      - 'tools/osengine_lab_audit.py'
+      - '.github/workflows/osengine-lab-marketmaker.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '37 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  source-audit:
+    name: Source inventory (NOT functional tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect source-only properties, without OsEngine
+        run: python3 tools/osengine_lab_audit.py --file MarketMakerStakan3.cs --out osengine-report.json
+      - name: Flag report-generation failure
+        if: failure()
+        run: echo 'Source inventory failed before creating a report.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osengine-lab-marketmaker-${{ github.run_id }}
+          path: osengine-report.json
+          if-no-files-found: warn
+          retention-days: 30
