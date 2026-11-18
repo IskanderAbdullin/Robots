@@ -71,8 +71,8 @@ namespace OsEngine.Robots.MarketMaker
             TabCreate(BotTabType.Simple);
             _tab = TabsSimple[0];
             _nonTradePeriods = new NonTradePeriods(name);
-            _nonTradeMode = CreateParameter("В неторговый период", "Только закрытие позиций", new[] { "Только закрытие позиций", "Пауза" });
-            _nonTradeButton = CreateParameterButton("Неторговые периоды", "Base");
+            _nonTradeMode = CreateParameter("В неторговый период", "Только закрытие позиций", new[] { "Только закрытие позиций", "Пауза" }, "Неторговые периоды");
+            _nonTradeButton = CreateParameterButton("Неторговые периоды", "Неторговые периоды");
             _nonTradeButton.UserClickOnButtonEvent += () => _nonTradePeriods.ShowDialog();
 
             List<Position> restoredPositions = _tab.PositionsAll;
