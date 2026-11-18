@@ -13,6 +13,9 @@ namespace OsEngine.Robots.MarketMaker
     public class MarketMakerStakan3 : BotPanel
     {
         private BotTabSimple _tab;
+        private readonly NonTradePeriods _nonTradePeriods;
+        private readonly StrategyParameterString _nonTradeMode;
+        private readonly StrategyParameterButton _nonTradeButton;
 
         private StrategyParameterString _regime;
         private StrategyParameterString _buyMode;
@@ -67,6 +70,10 @@ namespace OsEngine.Robots.MarketMaker
         {
             TabCreate(BotTabType.Simple);
             _tab = TabsSimple[0];
+            _nonTradePeriods = new NonTradePeriods(name);
+            _nonTradeMode = CreateParameter("В неторговый период", "Только закрытие позиций", new[] { "Только закрытие позиций", "Пауза" });
+            _nonTradeButton = CreateParameterButton("Неторговые периоды", "Base");
+            _nonTradeButton.UserClickOnButtonEvent += () => _nonTradePeriods.ShowDialog();
 
             List<Position> restoredPositions = _tab.PositionsAll;
 
@@ -98,6 +105,62 @@ namespace OsEngine.Robots.MarketMaker
             DeleteEvent += MarketMakerStakan3_DeleteEvent;
         }
 
+        
+        private bool ScheduledTradeAllowed()
+        {
+            DateTime time = _tab.TimeServerCurrent;
+            return time != DateTime.MinValue && _nonTradePeriods.CanTradeThisTime(time);
+        }
+        private bool SchedulePaused() => _nonTradeMode.ValueString == "Пауза" && !ScheduledTradeAllowed();
+        private bool ScheduleCloseOnly() => _nonTradeMode.ValueString != "Пауза" && !ScheduledTradeAllowed();
+
+        private decimal SignedBoardPosition()
+        {
+            if (_tab.Security == null || _tab.Portfolio == null) return 0;
+            List<PositionOnBoard> rows = _tab.Portfolio.GetPositionOnBoard();
+            PositionOnBoard found = null;
+            for (int i = 0; rows != null && i < rows.Count; i++)
+            {
+                PositionOnBoard row = rows[i];
+                if (row == null || row.SecurityNameCode != _tab.Security.Name ||
+                    (!string.IsNullOrEmpty(row.SecurityNameClass) && row.SecurityNameClass != _tab.Security.NameClass))
+                    continue;
+                if (found != null) return 0;
+                found = row;
+            }
+            return found == null ? 0 : found.ValueCurrent;
+        }
+
+        // The plan is restricted to the direction that reduces current exposure.
+        // When flat this returns an empty plan and the existing orders are cancelled.
+        private List<PlanOrder> CloseOnlyPlan(List<PlanOrder> plan)
+        {
+            decimal net = SignedBoardPosition();
+            Side closeSide = net > 0 ? Side.Sell : Side.Buy;
+            decimal remaining = Math.Abs(net);
+            List<PlanOrder> restricted = new List<PlanOrder>();
+            if (remaining <= 0) return restricted;
+            for (int i = 0; i < plan.Count; i++)
+            {
+                if (plan[i].Side != closeSide || remaining <= 0) continue;
+                decimal volume = Math.Min(Math.Max(0, plan[i].Volume), remaining);
+                if (volume <= 0) continue;
+                restricted.Add(new PlanOrder { Side = closeSide, Price = plan[i].Price, Volume = volume });
+                remaining -= volume;
+            }
+            return restricted;
+        }
+
+        private decimal RemainingClosingCapacity(Side side)
+        {
+            decimal net = SignedBoardPosition();
+            decimal capacity = side == Side.Buy ? Math.Max(0, -net) : Math.Max(0, net);
+            List<Order> live = GetMyActiveOrders();
+            for (int i = 0; i < live.Count; i++)
+                if (live[i].Side == side) capacity -= Math.Max(0m, live[i].Volume - live[i].VolumeExecute);
+            return Math.Max(0, capacity);
+        }
+
         public override string GetNameStrategyType()
         {
             return "MarketMakerStakan3";
@@ -124,6 +187,8 @@ namespace OsEngine.Robots.MarketMaker
         {
             try
             {
+                // Pause mode must preserve positions and outstanding orders exactly as they are.
+                if (SchedulePaused()) return;
                 if (StartProgram == StartProgram.IsOsOptimizer)
                 {
                     return;
@@ -202,6 +267,22 @@ namespace OsEngine.Robots.MarketMaker
 
                     List<Order> activeOrders = GetMyActiveOrders();
                     List<PlanOrder> newPlan = BuildPlan(md, activeOrders);
+                    if (ScheduleCloseOnly())
+                    {
+                        decimal net = SignedBoardPosition();
+                        Side closeSide = net > 0 ? Side.Sell : Side.Buy;
+                        bool mustCancelOpeningOrders = false;
+                        for (int i = 0; i < activeOrders.Count; i++)
+                        {
+                            if (net == 0 || activeOrders[i].Side != closeSide)
+                            {
+                                CancelOrderSafe(activeOrders[i]);
+                                mustCancelOpeningOrders = true;
+                            }
+                        }
+                        if (mustCancelOpeningOrders) return;
+                        newPlan = CloseOnlyPlan(newPlan);
+                    }
 
                     if (OrdersMatchPlan(activeOrders, newPlan))
                     {
@@ -940,6 +1021,12 @@ namespace OsEngine.Robots.MarketMaker
             for (int j = k; j < planSide.Count; j++)
             {
                 decimal volumeToPlace = planSide[j].Volume;
+                if (SchedulePaused()) return;
+                if (ScheduleCloseOnly())
+                {
+                    volumeToPlace = Math.Min(volumeToPlace, RemainingClosingCapacity(side));
+                    if (volumeToPlace <= 0) continue;
+                }
 
                 if (side == Side.Sell)
                 {
