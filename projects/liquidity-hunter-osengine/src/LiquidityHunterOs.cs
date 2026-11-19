@@ -157,7 +157,20 @@ namespace OsEngine.Robots
 
         private void ManagePosition(BotTabSimple tab, Position position)
         {
-            if (position == null || position.OpenVolume <= 0m) return;
+            if (position == null) return;
+            // Entry order can be active while OpenVolume is zero or partially filled.
+            // Cancel expired residual entry before considering another position.
+            if (position.OpenOrders != null && position.OpenOrders.Count > 0)
+            {
+                Order opening = position.OpenOrders[0];
+                if (opening != null && opening.State == OrderStateType.Active &&
+                    tab.TimeServerCurrent >= opening.TimeCreate.AddSeconds(_maxEntryAgeSec.ValueInt))
+                {
+                    tab.CloseAllOrderToPosition(position);
+                    return; // Don't assume cancel succeeded; reconcile in subsequent ticks.
+                }
+            }
+            if (position.OpenVolume <= 0m) return;
             // Stop must take priority even when a resting profit-close order is active.
             decimal riskPrice = position.EntryPrice * (1m - _stopBps.ValueDecimal / 10000m);
             if (position.EntryPrice > 0m && tab.PriceBestBid > 0m &&
