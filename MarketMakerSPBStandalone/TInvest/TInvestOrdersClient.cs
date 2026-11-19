@@ -10,6 +10,7 @@ public sealed record TInvestOrderReport(
     string ClientId, string ExchangeId, ManagedOrderState State, long FilledLots,
     IReadOnlyList<TInvestFill>? Fills = null);
 public sealed record TInvestBuyingPower(long BuyLots, long SellLots);
+public sealed record TInvestInventory(long FreeSellLots, long TotalHeldLots);
 
 /// <summary>
 /// T-Invest unary order API binding. NOT used by the paper application.
@@ -136,6 +137,10 @@ public sealed class TInvestOrdersClient : IOrderGateway
 
     /// <summary>Cash/free securities only. Margin-selling or futures are not supported here.</summary>
     public async Task<long> ReadFreeSellLotsAsync(int lotSize,
+        CancellationToken cancellationToken = default) =>
+        (await ReadInventoryAsync(lotSize, cancellationToken)).FreeSellLots;
+
+    public async Task<TInvestInventory> ReadInventoryAsync(int lotSize,
         CancellationToken cancellationToken = default)
     {
         if (lotSize <= 0) throw new ArgumentOutOfRangeException(nameof(lotSize));
@@ -148,8 +153,12 @@ public sealed class TInvestOrdersClient : IOrderGateway
         var matches = response.Securities.Where(x => x.InstrumentUid == _instrumentUid).ToArray();
         if (matches.Length > 1)
             throw new InvalidOperationException("Ambiguous securities positions in account.");
-        if (matches.Length == 0) return 0;
-        return Math.Max(0L, matches[0].Balance) / lotSize;
+        if (matches.Length == 0) return new TInvestInventory(0, 0);
+        var position = matches[0];
+        long free = Math.Max(0L, position.Balance);
+        long total = checked(position.Balance + position.Blocked);
+        if (total < 0) throw new InvalidOperationException("Negative holdings: short position not supported.");
+        return new TInvestInventory(free / lotSize, (total + lotSize - 1) / lotSize);
     }
 
     public static ManagedOrderState Map(OrderExecutionReportStatus status) => status switch
