@@ -5,7 +5,6 @@ internal static class ReplayChecks
 {
     public static void Run()
     {
-        using LiquidityHunter.Advanced;
         var now=DateTimeOffset.UtcNow;
         var book=new DepthFrame("X",now,
             new[]{new DepthLevel(99m,100m)},new[]{new DepthLevel(101m,20m)},
