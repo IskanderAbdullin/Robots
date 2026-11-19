@@ -273,4 +273,23 @@ using (var afterRelease = new InstanceLease(lockStatePath))
     Check(File.Exists(afterRelease.Path), "exclusive state lease can be reacquired after release");
 File.Delete(lockStatePath + ".lock");
 
+
+var absoluteRisk = new StrategyEvaluator("A", "U",
+    new PlanSettings(1, baseBuy, baseSell),
+    new SafetyLimits(50, 50, 10000, 10000, TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(5), MaxLongPositionLots: 20));
+var at = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+var remainingHeadroom = absoluteRisk.Evaluate(at, true, true, true,
+    new MarketSnapshot(book, at, true),
+    new AccountCapacity("A", "U", 50, 0, at, true, 18, true),
+    Array.Empty<ManagedOrder>());
+Check(remainingHeadroom.Desired.Where(x => x.Side == Side.Buy).Sum(x => x.Lots) == 2,
+    "absolute inventory ceiling limits accumulated buy position");
+var unknownInventory = absoluteRisk.Evaluate(at, true, true, true,
+    new MarketSnapshot(book, at, true),
+    new AccountCapacity("A", "U", 50, 0, at, true),
+    Array.Empty<ManagedOrder>());
+Check(!unknownInventory.Safety.CanCreate,
+    "unknown total inventory blocks live opening orders");
+
 Console.WriteLine($"All {checks} offline checks passed.");
