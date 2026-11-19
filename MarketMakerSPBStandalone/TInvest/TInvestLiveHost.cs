@@ -78,6 +78,7 @@ public sealed class TInvestLiveHost
         DateTimeOffset nextCapacity = DateTimeOffset.MinValue;
         DateTimeOffset nextAudit = DateTimeOffset.MinValue;
         DateTimeOffset nextRoutineAudit = DateTimeOffset.MinValue;
+        DateTimeOffset nextDiagnostics = DateTimeOffset.MinValue;
         try
         {
             while (!stop.IsCancellationRequested)
@@ -165,6 +166,16 @@ public sealed class TInvestLiveHost
                     enabled: armed, connected: connected,
                     ordersSynced: session.Audited && !auditRequested,
                     market: market, capacity: capacity, liveOrders: session.Orders.Orders);
+                if (now >= nextDiagnostics)
+                {
+                    var bestBid = market?.Depth.Bids.FirstOrDefault().Price ?? 0m;
+                    var bestAsk = market?.Depth.Asks.FirstOrDefault().Price ?? 0m;
+                    _log($"Health: {decision.Reason}; book={bestBid}/{bestAsk}; " +
+                        $"orders={session.Orders.Orders.Count(x => !x.Terminal)}; " +
+                        $"proposed={decision.Desired.Count}; netFillLots={session.Fills.NetLots}; " +
+                        $"brokerAudit={session.Audited}; liveArmed={armed}");
+                    nextDiagnostics = now.AddSeconds(5);
+                }
                 try
                 {
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
