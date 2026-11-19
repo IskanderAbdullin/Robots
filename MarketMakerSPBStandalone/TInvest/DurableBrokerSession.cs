@@ -84,7 +84,10 @@ public sealed class DurableBrokerSession : IDisposable
 
     private void ApplyReport(TInvestOrderReport report)
     {
-        if (!string.IsNullOrWhiteSpace(report.ExchangeId))
+        // T-Invest can return a temporary UUID before an exchange order number.
+        // Cancel/query a temporary order by idempotency key, not by the temporary UUID.
+        if (!string.IsNullOrWhiteSpace(report.ExchangeId) &&
+            !Guid.TryParse(report.ExchangeId, out _))
             _exchangeIds[report.ClientId] = report.ExchangeId;
         var tracked = Orders.Find(report.ClientId) ??
             throw new InvalidOperationException("Unknown own order in report.");
