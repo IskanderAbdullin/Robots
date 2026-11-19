@@ -69,7 +69,8 @@ namespace OsEngine.Robots
                 try
                 {
                     var tabs = _screener.Tabs;
-                    if (_regime.ValueString != "Off" && tabs != null)
+                    // Manage existing positions even when regime is Off; Off forbids new entries.
+                    if (tabs != null)
                     {
                         foreach (var tab in tabs)
                         {
