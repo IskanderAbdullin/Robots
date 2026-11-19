@@ -79,6 +79,8 @@ sealed class FakeGateway : IOrderGateway
             "another-robot", "external", ManagedOrderState.Working, 0)).ToList();
         return Task.FromResult(active);
     }
+    public Task<long> ReadFreeSellLotsAsync(int lotSize, CancellationToken token = default) =>
+        Task.FromResult(100L);
     public Task<TInvestBuyingPower> ReadBuyingPowerAsync(CancellationToken token = default) =>
         Task.FromResult(new TInvestBuyingPower(100, 100));
 }
