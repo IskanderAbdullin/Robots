@@ -4,20 +4,22 @@ namespace MarketMakerSPBStandalone.Runtime;
 
 public sealed record AccountCapacity(
     string AccountId, string InstrumentUid, long ConfirmedBuyLots, long ConfirmedSellLots,
-    DateTimeOffset Timestamp, bool Authoritative);
+    DateTimeOffset Timestamp, bool Authoritative,
+    long TotalHeldLots = 0, bool PositionAuthoritative = false);
 public sealed record MarketSnapshot(
     Book Depth, DateTimeOffset Timestamp, bool TradingAllowed, decimal MinPrice = 0,
     decimal MaxPrice = 0);
 public sealed record SafetyLimits(
     long MaxBuyLots, long MaxSellLots, decimal MaxBuyNotional,
     decimal MaxSellNotional, TimeSpan MaxBookAge, TimeSpan MaxPortfolioAge,
-    int LotSize = 1, decimal PointValue = 1m)
+    int LotSize = 1, decimal PointValue = 1m,
+    long MaxLongPositionLots = long.MaxValue)
 {
     public void Validate()
     {
         if (MaxBuyLots < 0 || MaxSellLots < 0 || MaxBuyNotional < 0 ||
             MaxSellNotional < 0 || MaxBookAge <= TimeSpan.Zero || MaxPortfolioAge <= TimeSpan.Zero ||
-            LotSize <= 0 || PointValue <= 0)
+            LotSize <= 0 || PointValue <= 0 || MaxLongPositionLots < 0)
             throw new ArgumentException("Invalid risk limits.");
     }
 }
