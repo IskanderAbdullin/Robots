@@ -2,7 +2,7 @@
 
 Standalone .NET 10 CLI project inspired by the repository `IskanderAbdullin/Claude` (separate code; no shared dependencies). It watches the T-Invest REST API for `ANTperp`, checks that limit and API trading are permitted and that a live order book exists, then submits a **single** configured buy ladder.
 
-> **WARNING** The product is an SPB Exchange perpetual futures neo-asset, not Nasdaq common stock. Orders can execute immediately when crossed; `$70–90` are price *points* whose contract valuation/margin and tick size must be independently verified in T-Invest before enabling live mode. 320 lots is NOT necessarily 320 US shares. Default live trading is DISABLED.
+> **WARNING** The product is an SPB Exchange perpetual futures neo-asset, not Nasdaq common stock. Orders can execute immediately when crossed; `$70–90` are price *points* whose contract valuation/margin and tick size must be independently verified in T-Invest before enabling live mode. 395 lots is NOT necessarily 395 US shares. Default live trading is DISABLED.
 
 ## Setup
 
@@ -15,7 +15,7 @@ Standalone .NET 10 CLI project inspired by the repository `IskanderAbdullin/Clau
 
 ## Default ladder
 
-21 BUY LIMIT orders at every whole price from 70 through 90 inclusive; 16 lots at 70–74, 15 lots at 75–90 (total: 320 lots). Override with the `levels` JSON array of objects `{"price":70,"lots":16}`, or change `minPrice`, `maxPrice`, `priceStep`, `totalLots`. If `levels` is non-empty, it takes precedence. Always review the printed order plan.
+26 BUY LIMIT orders at every whole price from 70 through 95 inclusive; 16 lots at 70–74, 15 lots at 75–95 (total: 395 lots). Override with the `levels` JSON array of objects `{"price":70,"lots":16}`, or change `minPrice`, `maxPrice`, `priceStep`, `totalLots`. If `levels` is non-empty, it takes precedence. Always review the printed order plan.
 
 The order-entry rate gate allows no more than 13 starts in any sliding one-second period, and sequential HTTP requests may be slower. This is NOT a guarantee that 21 orders will reach the venue within two seconds: market-data polling, network RTT, broker processing and dynamic rate limits all matter. No retries after any ambiguous placement. A durable append-only JSONL journal records every live attempt (flushed to disk BEFORE HTTP call), its client idempotency UUID, broker acknowledgement or uncertainty. Relaunch skips previously attempted price levels. Journal files must not be deleted to restart trading without separately reconciling positions and active orders.
 
@@ -27,7 +27,7 @@ The order-entry rate gate allows no more than 13 starts in any sliding one-secon
 - The code checks `apiTradeAvailableFlag` and `limitOrderAvailableFlag` and accepts the normal trading states. If the broker does not expose these flags for this instrument, it will wait rather than submit.
 - `priceType` defaults to `PRICE_TYPE_POINT` for futures; this is a preliminary setting, NOT proof of valid quotation convention for ANTperp. Confirm with broker prior to live trading.
 - `positionLimitLots` validates planned gross lots but DOES NOT query account positions or available margin and **is not a portfolio-level risk cap**. A live order may be rejected for insufficient margin or price corridors. The engine stops on first rejection or ambiguous result.
-- The `allowCrossingSpread` switch is currently descriptive only; it **does not** impose a protection against marketable BUY limit orders. When price is at/below the BUY limit, execution may be immediate, possibly for all 320 lots. Live enabling requires this explicitly understood.
+- The `allowCrossingSpread` switch is currently descriptive only; it **does not** impose a protection against marketable BUY limit orders. When price is at/below the BUY limit, execution may be immediate, possibly for all 395 lots. Live enabling requires this explicitly understood.
 - Uses HTTP REST. No API credentials stored in source. No background task is created by merely pushing code to GitHub. Running it requires an active machine/terminal.
 - Never cancels existing orders on Ctrl+C; Ctrl+C only stops the placement process.
 - No genuine broker integration test, order submission test, latency benchmark, or production certification has been run.
