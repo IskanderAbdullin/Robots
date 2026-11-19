@@ -260,4 +260,17 @@ try
 }
 finally { File.Delete(fillsPath); }
 
+
+var lockStatePath = Path.Combine(Path.GetTempPath(), "mm-lease-" + Guid.NewGuid().ToString("N"));
+using (var first = new InstanceLease(lockStatePath))
+{
+    bool secondBlocked = false;
+    try { using var second = new InstanceLease(lockStatePath); }
+    catch (IOException) { secondBlocked = true; }
+    Check(secondBlocked, "second process cannot own the same state path");
+}
+using (var afterRelease = new InstanceLease(lockStatePath))
+    Check(File.Exists(afterRelease.Path), "exclusive state lease can be reacquired after release");
+File.Delete(lockStatePath + ".lock");
+
 Console.WriteLine($"All {checks} offline checks passed.");
