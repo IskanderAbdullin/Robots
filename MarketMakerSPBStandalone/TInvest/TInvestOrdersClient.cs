@@ -12,7 +12,7 @@ public sealed record TInvestBuyingPower(long BuyLots, long SellLots);
 /// T-Invest unary order API binding. NOT used by the paper application.
 /// Must never treat a timeout or successful cancel HTTP/gRPC response as a terminal order report.
 /// </summary>
-public sealed class TInvestOrdersClient
+public sealed class TInvestOrdersClient : IOrderGateway
 {
     private readonly InvestApiClient _client;
     private readonly string _accountId;
