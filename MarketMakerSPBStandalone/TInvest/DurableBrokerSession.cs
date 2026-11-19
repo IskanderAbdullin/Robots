@@ -24,6 +24,8 @@ public sealed class DurableBrokerSession : IDisposable
     private readonly Dictionary<string, string> _exchangeIds = new(StringComparer.Ordinal);
     public OrderReconciler Orders { get; }
     public bool Audited { get; private set; }
+    /// <summary>Must be called on every transport disconnect/reconnect before new quotes.</summary>
+    public void RequireAudit() => Audited = false;
 
     public DurableBrokerSession(string journalPath, IOrderGateway broker)
     {
