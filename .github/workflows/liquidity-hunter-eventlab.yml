@@ -1,0 +1,24 @@
+name: Liquidity Hunter eventlab tests
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'projects/liquidity-hunter-osengine/tests/eventlab/**'
+      - '.github/workflows/liquidity-hunter-eventlab.yml'
+  pull_request:
+    paths:
+      - 'projects/liquidity-hunter-osengine/tests/eventlab/**'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: projects/liquidity-hunter-osengine/tests/eventlab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Run deterministic lifecycle tests
+        run: python -m unittest -v test_engine.py
