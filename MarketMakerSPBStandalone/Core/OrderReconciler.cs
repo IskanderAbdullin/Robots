@@ -40,6 +40,9 @@ public sealed record MarketSafety(bool Enabled, bool Connected, bool TradingAllo
 public sealed class OrderReconciler
 {
     private readonly Dictionary<string, ManagedOrder> _orders = new();
+    private bool _failureStop;
+    /// <summary>Any definitive broker rejection stops new quotes until manual intervention.</summary>
+    public bool FailureStop => _failureStop;
     public IReadOnlyCollection<ManagedOrder> Orders => _orders.Values;
     public ManagedOrder? Find(string id) => _orders.GetValueOrDefault(id);
 
@@ -48,6 +51,7 @@ public sealed class OrderReconciler
         if (!_orders.TryGetValue(id, out var order))
             throw new InvalidOperationException("Unknown id requires broker reconciliation: " + id);
         order.Apply(state, cumulativeFilled);
+        if (state == ManagedOrderState.Rejected) _failureStop = true;
     }
 
     /// <summary>On ambiguous transport errors, block until authoritative broker audit.</summary>
@@ -73,6 +77,7 @@ public sealed class OrderReconciler
         IReadOnlyList<Quote> desired, MarketSafety safety)
     {
         var commands = new List<OrderCommand>();
+        if (_failureStop) safety = safety with { Enabled = false };
         // Safe shutdown: cancel every known live order; unknown/pending cannot be assumed cancellable.
         foreach (var order in _orders.Values)
         {
