@@ -158,4 +158,50 @@ Check(rejected.FailureStop && rejected.Reconcile(
     new[] { new Quote(Side.Buy, 99, 1) }, safe).Count == 0,
     "definitive broker rejection is a sticky fail-closed stop");
 
+
+var rng = new Random(20261120);
+for (int iteration = 0; iteration < 20_000; iteration++)
+{
+    int bid = rng.Next(20, 200);
+    int ask = bid + rng.Next(1, 15);
+    var fuzzBook = new Book(new[]
+    {
+        new Level(bid, rng.Next(1, 300)),
+        new Level(bid - 1, rng.Next(1, 300)),
+    }, new[]
+    {
+        new Level(ask, rng.Next(1, 300)),
+        new Level(ask + 1, rng.Next(1, 300)),
+    });
+    var fuzzBuy = baseBuy with
+    {
+        Placement = (PlacementMode)rng.Next(2),
+        Sizing = SizeMode.Available,
+        MaxAvailableLots = rng.Next(0, 250),
+        ThresholdLots = rng.Next(0, 400),
+        Percent = rng.Next(0, 101)
+    };
+    var fuzzSell = baseSell with
+    {
+        Placement = (PlacementMode)rng.Next(2),
+        Sizing = SizeMode.Available,
+        MaxAvailableLots = rng.Next(0, 250),
+        ThresholdLots = rng.Next(0, 400),
+        Percent = rng.Next(0, 101)
+    };
+    var quotes = QuotePlanner.Build(new PlanningInput(fuzzBook,
+        new PlanSettings(1m, fuzzBuy, fuzzSell), Array.Empty<Quote>()));
+    var buyTotal = quotes.Where(x => x.Side == Side.Buy).Sum(x => x.Lots);
+    var sellTotal = quotes.Where(x => x.Side == Side.Sell).Sum(x => x.Lots);
+    if (buyTotal > fuzzBuy.MaxAvailableLots || sellTotal > fuzzSell.MaxAvailableLots ||
+        quotes.Any(x => x.Lots <= 0 || x.Price <= 0 ||
+            (x.Side == Side.Buy && x.Price >= ask) ||
+            (x.Side == Side.Sell && x.Price <= bid)) ||
+        (quotes.Any(x => x.Side == Side.Buy) && quotes.Any(x => x.Side == Side.Sell) &&
+         quotes.Where(x => x.Side == Side.Buy).Max(x => x.Price) >=
+         quotes.Where(x => x.Side == Side.Sell).Min(x => x.Price)))
+        throw new Exception("Property failure at iteration " + iteration);
+}
+Check(true, "20,000 randomized dual-sided book/size/crossing invariants");
+
 Console.WriteLine($"All {checks} offline checks passed.");
