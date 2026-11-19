@@ -34,6 +34,7 @@ public sealed class StrategyEvaluator
     {
         var portfolioFresh = capacity is { Authoritative: true } p &&
             p.AccountId == _account && p.InstrumentUid == _uid &&
+            (_risk.MaxLongPositionLots == long.MaxValue || p.PositionAuthoritative) &&
             p.Timestamp <= now && now - p.Timestamp <= _risk.MaxPortfolioAge;
         var bookFresh = market is { } m && m.Timestamp <= now &&
             now - m.Timestamp <= _risk.MaxBookAge;
@@ -59,6 +60,11 @@ public sealed class StrategyEvaluator
             .Sum(x => x.Outstanding);
         long buyTotal = Math.Min(_risk.MaxBuyLots,
             checked(Math.Max(0L, p0.ConfirmedBuyLots) + existingBuy));
+        // Even fully filled and no-longer-active buy orders consume the
+        // absolute long-inventory limit. The broker position includes blocked shares.
+        if (_risk.MaxLongPositionLots != long.MaxValue)
+            buyTotal = Math.Min(buyTotal,
+                Math.Max(0L, _risk.MaxLongPositionLots - p0.TotalHeldLots));
         long sellTotal = Math.Min(_risk.MaxSellLots,
             checked(Math.Max(0L, p0.ConfirmedSellLots) + existingSell));
         var buy = _settings.Buy with { MaxAvailableLots = buyTotal };
