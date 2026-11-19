@@ -50,14 +50,19 @@ public sealed class StrategyEvaluator
         var m0 = market!;
         var own = liveOrders.Where(x => !x.Terminal)
             .Select(x => new Quote(x.Side, x.Price, x.Outstanding)).ToArray();
-        var buy = _settings.Buy with
-        {
-            MaxAvailableLots = Math.Min(_risk.MaxBuyLots, p0.ConfirmedBuyLots)
-        };
-        var sell = _settings.Sell with
-        {
-            MaxAvailableLots = Math.Min(_risk.MaxSellLots, p0.ConfirmedSellLots)
-        };
+        // Broker GetMaxLots reports room for NEW orders; existing live reservations
+        // must be added back to obtain a desired TOTAL live order budget.
+        // The hard configured cap still bounds this sum.
+        long existingBuy = liveOrders.Where(x => !x.Terminal && x.Side == Side.Buy)
+            .Sum(x => x.Outstanding);
+        long existingSell = liveOrders.Where(x => !x.Terminal && x.Side == Side.Sell)
+            .Sum(x => x.Outstanding);
+        long buyTotal = Math.Min(_risk.MaxBuyLots,
+            checked(Math.Max(0L, p0.ConfirmedBuyLots) + existingBuy));
+        long sellTotal = Math.Min(_risk.MaxSellLots,
+            checked(Math.Max(0L, p0.ConfirmedSellLots) + existingSell));
+        var buy = _settings.Buy with { MaxAvailableLots = buyTotal };
+        var sell = _settings.Sell with { MaxAvailableLots = sellTotal };
         if (buy.Sizing == SizeMode.Fixed)
             buy = buy with { FixedLots = Math.Min(buy.FixedLots, buy.MaxAvailableLots) };
         if (sell.Sizing == SizeMode.Fixed)
