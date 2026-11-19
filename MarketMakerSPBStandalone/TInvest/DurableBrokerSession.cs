@@ -10,6 +10,7 @@ public interface IOrderGateway
     Task<TInvestOrderReport> ReadStateAsync(string exchangeId, string clientId, CancellationToken token = default);
     Task<IReadOnlyList<TInvestOrderReport>> ReadActiveAsync(CancellationToken token = default);
     Task<TInvestBuyingPower> ReadBuyingPowerAsync(CancellationToken token = default);
+    Task<long> ReadFreeSellLotsAsync(int lotSize, CancellationToken token = default);
 }
 
 /// <summary>
