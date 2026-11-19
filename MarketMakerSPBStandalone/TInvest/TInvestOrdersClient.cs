@@ -18,6 +18,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
     private readonly string _accountId;
     private readonly string _instrumentUid;
     private readonly bool _allowWrites;
+    private readonly bool _allowMarginBuys;
     // These static gates cover all instances in this process, not just one account.
     private static readonly ConservativeQuotaGate PostGate = new(100, 8);
     private static readonly ConservativeQuotaGate CancelAndStateGate = new(70, 8);
@@ -25,7 +26,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
     private static readonly ConservativeQuotaGate OperationsGate = new(120, 8);
 
     public TInvestOrdersClient(InvestApiClient client, string accountId, string instrumentUid,
-        bool allowWrites = false)
+        bool allowWrites = false, bool allowMarginBuys = false)
     {
         if (string.IsNullOrWhiteSpace(accountId) || string.IsNullOrWhiteSpace(instrumentUid))
             throw new ArgumentException("Account and instrument must be explicit.");
@@ -33,6 +34,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
         _accountId = accountId;
         _instrumentUid = instrumentUid;
         _allowWrites = allowWrites;
+        _allowMarginBuys = allowMarginBuys;
     }
 
     private void RequireWrites()
@@ -59,7 +61,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
             OrderType = OrderType.Limit,
             OrderId = command.ClientId,
             TimeInForce = TimeInForceType.TimeInForceDay,
-            ConfirmMarginTrade = false
+            ConfirmMarginTrade = command.Side == Side.Buy && _allowMarginBuys
         }, cancellationToken: cancellationToken);
         return new TInvestOrderReport(command.ClientId, response.OrderId,
             Map(response.ExecutionReportStatus), response.LotsExecuted);
@@ -122,7 +124,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
             AccountId = _accountId, InstrumentId = _instrumentUid
         }, cancellationToken: cancellationToken);
         return new TInvestBuyingPower(
-            response.BuyLimits?.BuyMaxLots ?? 0,
+            (_allowMarginBuys ? response.BuyMarginLimits : response.BuyLimits)?.BuyMaxLots ?? 0,
             response.SellLimits?.SellMaxLots ?? 0);
     }
 
