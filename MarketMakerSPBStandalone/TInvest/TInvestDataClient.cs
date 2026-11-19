@@ -39,6 +39,12 @@ public sealed class TInvestDataClient
         return result.Accounts.Select(x => x.Id).ToArray();
     }
 
+    public static decimal ToDecimal(MoneyValue? money)
+    {
+        if (money is null) return 0m;
+        return money.Units + money.Nano / 1_000_000_000m;
+    }
+
     public static decimal ToDecimal(Quotation? quote)
     {
         if (quote is null) return 0m;
