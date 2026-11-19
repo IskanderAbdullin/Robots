@@ -36,6 +36,7 @@ public sealed class LiveBotSettings
 
     public bool LiveAuthorized(bool cliLiveSwitch) =>
         cliLiveSwitch && Enabled && AllowLiveWrites &&
+        Risk.MaxLongPositionLots > 0 && Risk.MaxLongPositionLots != long.MaxValue &&
         LiveAcknowledgement == "I_UNDERSTAND_REAL_MONEY_ORDERS" &&
         Environment.GetEnvironmentVariable("MARKETMAKER_LIVE_ACK") ==
             "I_UNDERSTAND_REAL_MONEY_ORDERS";
