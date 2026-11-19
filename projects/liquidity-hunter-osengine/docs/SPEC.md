@@ -28,3 +28,32 @@ OS0 source skeleton, no live entry; OS1 passive multi-symbol entry and protectiv
 
 ## Safety
 "Off" by default; On must be explicitly selected in terminal. Never guarantee profitable close. Stop loss/time risk overrides profit target. Do not infer execution from visible book alone. No self-crossing, spoofing or excessively frequent cancel/replace; economic intent on every quote.
+
+
+## Iteration OS5 — eventlab synthetic regression gates (2026-11-20)
+Implemented:
+- `tests/eventlab/engine.py`: abstract event-driven limit-order lifecycle, in-flight cancels, queue-ahead estimates, partial fills, global notional reservations and portfolio slot caps.
+- `tests/eventlab/test_engine.py`: deterministic order/accounting regression suite including 200 seeded randomized lifecycle sequences.
+- `tests/eventlab/stress.py`: deterministic 12-regime multi-symbol research runner, three roundtrip fee levels.
+- `.github/workflows/liquidity-hunter-eventlab.yml`: Python tests on relevant commits or manual dispatch.
+- [Detailed local test report](EVENTLAB-ITERATION2-2026-11-20.md).
+
+**Priority findings for native OS Engine C# implementation** (not yet implemented and must block live readiness):
+1. MaxPositions must count not only confirmed positions but also symbols with pending entry orders, otherwise correlated fills violate cap.
+2. A pending cancellation must retain both cash and position slot reservation until broker-confirmed cancellation or fill.
+3. Fills may arrive while cancellation is pending. Check actual per-order cumulative filled quantity; do not infer remaining size from local quote.
+4. Only confirmed filled quantity can be closed; stop exit must first reconcile or cancel still-active entry and existing exit orders.
+5. Order submission acknowledgement and broker state reconciliation are mandatory after reconnect; no duplicate requests on uncertain status.
+6. Restore close supervision even when entries disabled; emergency stop must function when profit close is already active.
+7. No inference of queue priority or guaranteed fills from order-book snapshots alone; add trades or conservative range estimates.
+8. Add historical experiment split by date and held-out symbols, at least three fee/slippage assumptions and different clock delays.
+9. Prevent optimistic end-of-day marking: simulate last available depth and maximum executable size, carrying residual inventory.
+10. Native OS Engine build, real OsTester execution and reconciliation against actual connector semantics remain mandatory. A Python eventlab pass is not sufficient.
+
+Performance protocol:
+- Training: historical data first 60%, validation next 20%, untouched test final 20%; additionally hold out instruments.
+- Decision metrics: net PnL and drawdown after fees, adverse selection at 1/5/30/300 seconds, fill rate, queue sensitivity, stale decision count, cancel rejection/timeout count, capital utilization and per-position exposure.
+- Comparing strategies: no-trade, baseline passive best-bid, depth-imbalance, regime-filtered, conservative fill bounds.
+- Optimization objective must penalize loss tails and capital lock time. Do not select live parameters from synthetic profitability alone.
+
+OS Data sources: https://www.os-engine-eng.com/posts/we-download-order-book-snapshots-and-run-tests.html and https://www.os-engine-eng.com/posts/osdata-and-tester-downloading-transaction-history-running-tests.html .
