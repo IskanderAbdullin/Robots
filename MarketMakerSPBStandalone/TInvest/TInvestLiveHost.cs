@@ -77,6 +77,7 @@ public sealed class TInvestLiveHost
 
         DateTimeOffset nextCapacity = DateTimeOffset.MinValue;
         DateTimeOffset nextAudit = DateTimeOffset.MinValue;
+        DateTimeOffset nextRoutineAudit = DateTimeOffset.MinValue;
         try
         {
             while (!stop.IsCancellationRequested)
@@ -104,7 +105,10 @@ public sealed class TInvestLiveHost
                     session.RequireAudit();
                     lock (_snapshotLock) { _needAudit = true; _capacity = null; }
                 }
-                if (connected && (auditRequested || !session.Audited) && now >= nextAudit)
+                bool cancellationOutstanding = session.Orders.Orders.Any(x =>
+                    x.State == ManagedOrderState.CancelPending);
+                if (connected && (auditRequested || !session.Audited ||
+                    cancellationOutstanding || now >= nextRoutineAudit) && now >= nextAudit)
                 {
                     try
                     {
@@ -119,6 +123,7 @@ public sealed class TInvestLiveHost
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
                     catch (Exception ex) { _log("Order audit failed: " + ex.Message); }
                     nextAudit = now.AddSeconds(5);
+                    nextRoutineAudit = now.AddSeconds(15);
                 }
 
                 if (connected && now >= nextCapacity)
