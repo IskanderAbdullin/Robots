@@ -150,4 +150,12 @@ try
 }
 finally { File.Delete(controllerJournal); }
 
+
+var rejected = new OrderReconciler();
+var firstRejected = rejected.Reconcile(new[] { new Quote(Side.Buy, 99, 1) }, safe);
+rejected.OnBrokerReport(firstRejected[0].ClientId, ManagedOrderState.Rejected, 0);
+Check(rejected.FailureStop && rejected.Reconcile(
+    new[] { new Quote(Side.Buy, 99, 1) }, safe).Count == 0,
+    "definitive broker rejection is a sticky fail-closed stop");
+
 Console.WriteLine($"All {checks} offline checks passed.");
