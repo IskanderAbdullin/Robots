@@ -40,7 +40,7 @@ public static class QuotePlanner
             return Array.Empty<Quote>(); // fail closed on crossed, empty or invalid book
         var result = new List<Quote>();
         BuildSide(Side.Buy, bids, input.Settings.Buy, step, bids[0].Price,
-            asks[0].Price, input.MinPrice, input.MaxPrice, result);
+            asks[0].Price, input.MinPrice, input.MaxPrice, input.OwnLiveOrders, result);
         BuildSide(Side.Sell, asks, input.Settings.Sell, step, bids[0].Price,
             asks[0].Price, input.MinPrice, input.MaxPrice, result);
         // Both sides can target the same price in a one-tick spread.
@@ -72,7 +72,8 @@ public static class QuotePlanner
 
     private static void BuildSide(Side side, IReadOnlyList<Level> levels,
         SideSettings cfg, decimal step, decimal bestBid, decimal bestAsk,
-        decimal minPrice, decimal maxPrice, List<Quote> result)
+        decimal minPrice, decimal maxPrice, IReadOnlyList<Quote> ownOrders,
+        List<Quote> result)
     {
         var remaining = cfg.Sizing == SizeMode.Fixed ? cfg.FixedLots : cfg.MaxAvailableLots;
         if (remaining <= 0) return;
@@ -81,7 +82,10 @@ public static class QuotePlanner
             foreach (var level in levels)
             {
                 if (level.Lots < cfg.ThresholdLots) continue;
-                var price = level.Price + (side == Side.Buy ? step : -step);
+                // Legacy OsEngine behavior: if this target is our existing level,
+                // keep its price instead of endlessly stepping ahead of ourselves.
+                var price = ownOrders.Any(o => o.Side == side && o.Price == level.Price && o.Lots > 0)
+                    ? level.Price : level.Price + (side == Side.Buy ? step : -step);
                 if (Allowed(price, side, bestBid, bestAsk, minPrice, maxPrice))
                     result.Add(new Quote(side, price, remaining));
                 break;
