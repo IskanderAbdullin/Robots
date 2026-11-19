@@ -2,3 +2,21 @@
 !MarketMakerStakan3.md
 !MarketMakerStakan3.cs
 !.gitignore
+
+# Standalone SPB market maker is a source-controlled subproject.
+!MarketMakerSPBStandalone/
+!MarketMakerSPBStandalone/**/
+!MarketMakerSPBStandalone/**/*
+MarketMakerSPBStandalone/**/bin/
+MarketMakerSPBStandalone/**/obj/
+MarketMakerSPBStandalone/config.json
+MarketMakerSPBStandalone/**/config.local.json
+MarketMakerSPBStandalone/**/.env
+MarketMakerSPBStandalone/**/state/
+MarketMakerSPBStandalone/**/*.jsonl
+MarketMakerSPBStandalone/**/*.lock
+
+# Keep its CI workflow tracked when editing it locally.
+!.github/
+!.github/workflows/
+!.github/workflows/marketmaker-standalone.yml
