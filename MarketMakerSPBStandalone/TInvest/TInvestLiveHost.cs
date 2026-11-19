@@ -23,6 +23,7 @@ public sealed class TInvestLiveHost
     private bool _statusKnown;
     private bool _tradingAllowed;
     private bool _needAudit = true;
+    private DateTimeOffset _lastOrderHeartbeat = DateTimeOffset.MinValue;
 
     public TInvestLiveHost(LiveBotSettings config, bool cliLiveSwitch, Action<string> log)
     {
@@ -63,10 +64,14 @@ public sealed class TInvestLiveHost
                 lock (_snapshotLock)
                 {
                     _orderConnected = alive;
+                    _lastOrderHeartbeat = DateTimeOffset.MinValue;
                     _needAudit = true;
                     _capacity = null;
                 }
                 session.RequireAudit();
+            }, heartbeat =>
+            {
+                lock (_snapshotLock) _lastOrderHeartbeat = heartbeat;
             }, background.Token);
 
         DateTimeOffset nextCapacity = DateTimeOffset.MinValue;
@@ -86,12 +91,18 @@ public sealed class TInvestLiveHost
                 AccountCapacity? capacity;
                 lock (_snapshotLock)
                 {
-                    connected = _marketConnected && _orderConnected && _statusKnown;
+                    connected = _marketConnected && _orderConnected && _statusKnown &&
+                        now - _lastOrderHeartbeat <= TimeSpan.FromSeconds(45);
                     auditRequested = _needAudit;
                     market = _market;
                     capacity = _capacity;
                 }
 
+                if (!connected && session.Audited)
+                {
+                    session.RequireAudit();
+                    lock (_snapshotLock) { _needAudit = true; _capacity = null; }
+                }
                 if (connected && (auditRequested || !session.Audited) && now >= nextAudit)
                 {
                     try
