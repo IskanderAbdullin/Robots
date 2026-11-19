@@ -235,4 +235,29 @@ try
 }
 finally { File.Delete(budgetJournal); }
 
+
+var fillsPath = Path.Combine(Path.GetTempPath(), "mm-fills-" + Guid.NewGuid().ToString("N") + ".jsonl");
+try
+{
+    var t = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+    var buyFill = new ExecutedFill("order1", "trade1", Side.Buy, 100, 3, t);
+    var sellFill = new ExecutedFill("order2", "trade2", Side.Sell, 101, 2, t);
+    using (var journal = new DurableFillLedger(fillsPath))
+    {
+        journal.Record(buyFill);
+        journal.Record(buyFill);
+        journal.Record(sellFill);
+        Check(journal.State.Fills.Count == 2 && journal.State.NetLots == 1 &&
+            journal.State.IncrementalMarkedResult(100, 1) == 2,
+            "deduplicated own trades and incremental marked result");
+    }
+    using (var reopened = new DurableFillLedger(fillsPath))
+    {
+        Check(reopened.State.Fills.Count == 2 &&
+            reopened.State.IncrementalMarkedResult(100, 1) == 2,
+            "trade journal persists without double-counting");
+    }
+}
+finally { File.Delete(fillsPath); }
+
 Console.WriteLine($"All {checks} offline checks passed.");
