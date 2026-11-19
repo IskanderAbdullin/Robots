@@ -38,7 +38,9 @@ public sealed class TInvestStreamReader
         {
             try
             {
-                using var stream = _client.MarketDataStream.MarketDataStream(cancellationToken: stop);
+                using var streamTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
+                streamTimeout.CancelAfter(TimeSpan.FromSeconds(45));
+                using var stream = _client.MarketDataStream.MarketDataStream(cancellationToken: streamTimeout.Token);
                 await stream.RequestStream.WriteAsync(new MarketDataRequest
                 {
                     SubscribeOrderBookRequest = new SubscribeOrderBookRequest
@@ -63,8 +65,9 @@ public sealed class TInvestStreamReader
                     }
                 });
                 failures = 0;
-                await foreach (var message in stream.ResponseStream.ReadAllAsync(stop))
+                await foreach (var message in stream.ResponseStream.ReadAllAsync(streamTimeout.Token))
                 {
+                    streamTimeout.CancelAfter(TimeSpan.FromSeconds(45));
                     var now = DateTimeOffset.UtcNow;
                     switch (message.PayloadCase)
                     {
@@ -88,6 +91,7 @@ public sealed class TInvestStreamReader
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
             catch (RpcException) when (!stop.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (!stop.IsCancellationRequested) { }
             finally { onEvent(new TInvestMarketEvent(null, false, DateTimeOffset.UtcNow, false)); }
             failures++;
             await Task.Delay(TimeSpan.FromSeconds(Math.Min(60, 1 << Math.Min(failures, 5))), stop);
@@ -105,12 +109,15 @@ public sealed class TInvestStreamReader
             {
                 var request = new OrderStateStreamRequest { PingDelayMillis = 15000 };
                 request.Accounts.Add(_account);
+                using var streamTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
+                streamTimeout.CancelAfter(TimeSpan.FromSeconds(45));
                 using var stream = _client.OrdersStream.OrderStateStream(request,
-                    cancellationToken: stop);
+                    cancellationToken: streamTimeout.Token);
                 failures = 0;
                 bool announced = false;
-                await foreach (var message in stream.ResponseStream.ReadAllAsync(stop))
+                await foreach (var message in stream.ResponseStream.ReadAllAsync(streamTimeout.Token))
                 {
+                    streamTimeout.CancelAfter(TimeSpan.FromSeconds(45));
                     onHeartbeat(DateTimeOffset.UtcNow);
                     if (message.PayloadCase == OrderStateStreamResponse.PayloadOneofCase.Subscription &&
                         message.Subscription.Status != ResultSubscriptionStatus.Ok)
@@ -138,6 +145,7 @@ public sealed class TInvestStreamReader
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
             catch (RpcException) when (!stop.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (!stop.IsCancellationRequested) { }
             finally { onConnection(false); }
             failures++;
             await Task.Delay(TimeSpan.FromSeconds(Math.Min(60, 1 << Math.Min(failures, 5))), stop);
