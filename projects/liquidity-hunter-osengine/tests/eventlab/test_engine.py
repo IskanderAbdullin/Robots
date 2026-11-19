@@ -55,6 +55,15 @@ class TestLifecycle(unittest.TestCase):
         with self.assertRaises(ValueError):e.clock_advance(9)
     def test_no_crossed_quote(self):
         with self.assertRaises(ValueError):quote(0,bid=111,ask=110)
+    def test_logical_clock_universe_invariant(self):
+        def simulate(extra):
+            e=Engine(Policy(submit_latency=1,entry_ttl=5,cancel_latency=2))
+            e.place("A",100,2,0)
+            for t in range(1,4):
+                for s in ["A"]+[f"B{x}" for x in range(extra)]:
+                    e.event(quote(t,s,99 if s=="A" else 100,100 if s=="A" else 110))
+            return e.orders["O1"].filled
+        self.assertEqual(simulate(0),simulate(24))
     def test_finish_flattens(self):
         e=Engine(Policy(submit_latency=0));e.place("A",100,2,0)
         e.event(quote(1,sell=2));e.finish(2)
