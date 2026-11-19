@@ -91,6 +91,8 @@ sealed class FakeGateway : IOrderGateway
     }
     public Task<long> ReadFreeSellLotsAsync(int lotSize, CancellationToken token = default) =>
         Task.FromResult(100L);
+    public Task<TInvestInventory> ReadInventoryAsync(int lotSize, CancellationToken token = default) =>
+        Task.FromResult(new TInvestInventory(100, 100));
     public Task<TInvestBuyingPower> ReadBuyingPowerAsync(CancellationToken token = default) =>
         Task.FromResult(new TInvestBuyingPower(100, 100));
 }
