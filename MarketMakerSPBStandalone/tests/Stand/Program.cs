@@ -213,4 +213,26 @@ for (int iteration = 0; iteration < 20_000; iteration++)
 }
 Check(true, "20,000 randomized dual-sided book/size/crossing invariants");
 
+
+var budgetJournal = Path.Combine(Path.GetTempPath(), "mm-budget-" + Guid.NewGuid().ToString("N") + ".jsonl");
+try
+{
+    using var ps = new PaperSession(budgetJournal, new PaperBroker());
+    var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+    var controller = new MarketMakerController("A", "U", new PlanSettings(1, baseBuy, baseSell),
+        new SafetyLimits(12, 9, 2000, 2000, TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5)), ps)
+    {
+        Enabled = true, Connected = true, OrdersSynchronized = true,
+        Market = new MarketSnapshot(book, now, true),
+        Capacity = new AccountCapacity("A", "U", 12, 9, now, true)
+    };
+    Check(controller.Tick(now).Count == 2, "initial full budget quotes placed");
+    controller.Capacity = new AccountCapacity("A", "U", 0, 0, now, true);
+    Check(controller.Tick(now).Count == 0 &&
+        ps.Orders.Orders.Count(o => !o.Terminal) == 2,
+        "zero broker free limit does not cancel already reserved orders");
+}
+finally { File.Delete(budgetJournal); }
+
 Console.WriteLine($"All {checks} offline checks passed.");
