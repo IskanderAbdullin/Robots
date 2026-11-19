@@ -1,0 +1,37 @@
+{
+  "accountId": "REPLACE_ACCOUNT_ID",
+  "instrumentUid": "REPLACE_INSTRUMENT_UID",
+  "tokenEnvironment": "TINVEST_TOKEN",
+  "stateFile": "./state/marketmaker-orders.jsonl",
+  "bookDepth": 20,
+  "enabled": false,
+  "allowLiveWrites": false,
+  "liveAcknowledgement": "",
+  "priceStep": 0.01,
+  "buy": {
+    "placement": 0,
+    "sizing": 0,
+    "fixedLots": 0,
+    "thresholdLots": 100,
+    "percent": 100,
+    "maxAvailableLots": 0
+  },
+  "sell": {
+    "placement": 0,
+    "sizing": 0,
+    "fixedLots": 0,
+    "thresholdLots": 100,
+    "percent": 100,
+    "maxAvailableLots": 0
+  },
+  "risk": {
+    "maxBuyLots": 0,
+    "maxSellLots": 0,
+    "maxBuyNotional": 0,
+    "maxSellNotional": 0,
+    "maxBookAge": "00:00:02",
+    "maxPortfolioAge": "00:00:08",
+    "lotSize": 1,
+    "pointValue": 1
+  }
+}
