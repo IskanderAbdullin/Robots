@@ -22,6 +22,14 @@ try
         var placed = await session.TickAsync(new[] { new Quote(Side.Buy, 99, 5) }, safe);
         Assert(placed.Count == 1 && placed[0].Kind == CommandKind.Place, "post after audit");
         id = placed[0].ClientId;
+        var tradeTime = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var fillUpdate = new TInvestOrderReport(id, "paper-exchange-" + id,
+            ManagedOrderState.Partial, 2,
+            new[] { new TInvestFill("trade-01", 99m, 2, tradeTime) });
+        await session.OnStreamReportAsync(fillUpdate);
+        await session.OnStreamReportAsync(fillUpdate);
+        Assert(session.Fills.Fills.Count == 1 && session.Fills.NetLots == 2,
+            "duplicate broker trade reports are accounted only once");
         var cancel = await session.TickAsync(new[] { new Quote(Side.Buy, 98, 5) }, safe);
         Assert(cancel.Count == 1 && cancel[0].Kind == CommandKind.Cancel, "cancel old price first");
         Assert((await session.TickAsync(new[] { new Quote(Side.Buy, 98, 5) }, safe)).Count == 0,
@@ -34,6 +42,8 @@ try
     }
     using (var recovered = new DurableBrokerSession(temp, fake))
     {
+        Assert(recovered.Fills.Fills.Count == 1 && recovered.Fills.NetLots == 2,
+            "broker fills persisted after process restart");
         Assert(recovered.Orders.Orders.Any(o => !o.Terminal &&
             o.State == ManagedOrderState.Unknown), "unknown after process restart");
         Assert((await recovered.TickAsync(new[] { new Quote(Side.Buy, 98, 5) }, safe)).Count == 0,
