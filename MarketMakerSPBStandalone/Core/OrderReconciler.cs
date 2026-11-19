@@ -40,7 +40,6 @@ public sealed record MarketSafety(bool Enabled, bool Connected, bool TradingAllo
 public sealed class OrderReconciler
 {
     private readonly Dictionary<string, ManagedOrder> _orders = new();
-    private long _id;
     public IReadOnlyCollection<ManagedOrder> Orders => _orders.Values;
     public ManagedOrder? Find(string id) => _orders.GetValueOrDefault(id);
 
@@ -115,8 +114,7 @@ public sealed class OrderReconciler
                 if (_orders.Values.Any(o => !o.Terminal && o.Side != side &&
                     (side == Side.Buy ? quote.Price >= o.Price : quote.Price <= o.Price)))
                     continue;
-                var id = "mm-" + (++_id).ToString(System.Globalization.CultureInfo.InvariantCulture) +
-                         "-" + Guid.NewGuid().ToString("N");
+                var id = Guid.NewGuid().ToString("D");
                 var managed = new ManagedOrder { ClientId = id, Side = side, Price = quote.Price, Lots = delta };
                 _orders.Add(id, managed);
                 commands.Add(new OrderCommand(CommandKind.Place, id, side, quote.Price, delta));
