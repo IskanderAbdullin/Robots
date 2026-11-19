@@ -21,6 +21,8 @@ jobs:
         run: dotnet build MarketMakerSPBStandalone/MarketMakerSPBStandalone.csproj -c Release --nologo -warnaserror
       - name: Compile T-Invest read-only adapter
         run: dotnet build MarketMakerSPBStandalone/TInvest/TInvestAdapter.csproj -c Release --nologo -warnaserror
+      - name: Mock T-Invest order lifecycle
+        run: dotnet run --project MarketMakerSPBStandalone/TInvest/Stand/Stand.csproj -c Release
       - name: Compile console application
         run: dotnet build MarketMakerSPBStandalone/App/App.csproj -c Release --nologo -warnaserror
       - name: Run paper-only demo
