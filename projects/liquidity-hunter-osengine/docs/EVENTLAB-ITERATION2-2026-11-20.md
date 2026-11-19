@@ -4,22 +4,25 @@
 A locally executed **standalone Python test oracle**, developed to stress the OS Engine Liquidity Hunter strategy before deploying to real OS Engine. It does not run the OS Engine binary and never submits broker orders. The full source bundle and raw JSON outputs were generated as conversation artifact `liquidity_hunter_eventlab_v2.zip` (see user-facing attachment).
 
 ## Actual tests executed
-- Python 3.13.5, 22 unittest methods **passed**; one method repeats 200 randomized order sequences (12,000 simulated clock ticks in that method).
-- 12 synthetic market regimes, 12 symbols/regime, 240 frames/symbol; two strategy variants and three commission levels per seed. Thus 34,560 frames per strategy/fee configuration, six configurations per seed.
-- Two independent seeds, 20261120 and 20261121.
+- Python 3.13.5, 23 unittest methods **passed**; one method repeats 200 randomized order sequences (12,000 simulated clock ticks in that method).
+- 12 synthetic market regimes, 12 or 24 symbols/regime, 240 or 360 frames/symbol; two strategy variants and three commission levels per seed. Thus 34,560 or 103,680 quote events per strategy/fee configuration, six configurations per seed.
+- Three independent seeds, 20261120, 20261121 and 20261201.
 - Sample test logs: no same-tick fill, queue-ahead consumption, partial fills, fill while cancel pending, no fills after cancel acknowledgment, reservation survives partial fill, stop can override profit intent, halt/stale cancels entries, expired order stays pending until cancel ack, no duplicate instrument entries, monotonic timestamps, no negative inventory, full portfolio budget and slots reservation, seeded deterministic property checks.
 
 ## Monetary convention
 P&L shown in artificial integer **cents** from a single synthetic currency with one-share lot sizes. This is not RUB, not actual capital return, and not T-Invest fees. Commission `fee_bps` denotes total roundtrip cost (approximately), not a per-leg fee. The price dynamics and displayed depth are simulated; no real exchange data were used.
 
-| Seed | Roundtrip bps | Baseline P&L cents | Filtered P&L cents | Baseline filled shares | Filtered filled shares |
-|---|---:|---:|---:|---:|---:|
-| 20261120 | 0 | -2883.00 | -1750.00 | 343 | 315 |
-| 20261120 | 8 | -5244.39 | -3923.42 | 343 | 315 |
-| 20261120 | 16 | -7605.79 | -6096.84 | 343 | 315 |
-| 20261121 | 0 | -4532.00 | -2909.00 | 300 | 255 |
-| 20261121 | 8 | -6595.89 | -4669.84 | 300 | 255 |
-| 20261121 | 16 | -8659.78 | -6430.67 | 300 | 255 |
+| Seed | Instruments × steps | Roundtrip bps | Baseline P&L cents | Filtered P&L cents | Baseline fills | Filtered fills |
+|---|---|---:|---:|---:|---:|---:|
+| 20261120 | 12 × 240 | 0 | -66187.00 | -52030.00 | 1672 | 1463 |
+| 20261120 | 12 × 240 | 8 | -77464.30 | -61908.47 | 1672 | 1463 |
+| 20261120 | 12 × 240 | 16 | -88741.59 | -71786.94 | 1672 | 1463 |
+| 20261121 | 12 × 240 | 0 | -69958.00 | -57493.00 | 1662 | 1597 |
+| 20261121 | 12 × 240 | 8 | -81132.72 | -68330.82 | 1662 | 1597 |
+| 20261121 | 12 × 240 | 16 | -92307.43 | -79168.64 | 1662 | 1597 |
+| 20261201 | 24 × 360 | 0 | -163810.00 | -99803.00 | 3169 | 2515 |
+| 20261201 | 24 × 360 | 8 | -186987.27 | -118174.40 | 3169 | 2515 |
+| 20261201 | 24 × 360 | 16 | -210164.55 | -136545.80 | 3169 | 2515 |
 
 Filtered policy reduces losses but is not profitable. The additional 200 randomized order sequences test invariants, **not statistical alpha**.
 
@@ -59,3 +62,7 @@ python stress.py --symbols 12 --ticks 240 --out stress_results.json
 python stress.py --seed 20261121 --symbols 12 --ticks 240 --out stress_results_seed2.json
 ```
 The full eventlab sources and result JSON are available in the downloadable archive from this conversation. GitHub repo may contain a smaller smoke suite from the prior iteration; avoid confusing it with this full standalone benchmark.
+
+
+## Critical correction: shared event clock
+Previous portfolio stress results used `at=t*symbols+i`, accidentally mixing market time with the number of subscribed instruments. This changed fill frequency mechanically when universe size increased. **All earlier eventlab P&L figures are superseded.** We now use `at=t` for every symbol in each market step, and added an invariance test: unrelated symbols cannot change an order's simulated latency. After correction, 23/23 local methods passed. See corrected results above. The separate repository stress runner's clock was fixed in commit 67d5db8.
