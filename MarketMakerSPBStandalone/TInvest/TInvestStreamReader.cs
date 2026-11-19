@@ -129,8 +129,11 @@ public sealed class TInvestStreamReader
                     var mapped = TInvestOrdersClient.Map(state.ExecutionReportStatus);
                     if (mapped == ManagedOrderState.Partial && state.CompletionTime != null)
                         mapped = ManagedOrderState.Cancelled;
+                    var fills = state.Trades.Select(trade => new TInvestFill(
+                        trade.TradeId, TInvestDataClient.ToDecimal(trade.Price),
+                        trade.Quantity, trade.DateTime?.ToDateTimeOffset() ?? DateTimeOffset.MinValue)).ToArray();
                     onOrder(new TInvestOrderReport(state.OrderRequestId, state.OrderId,
-                        mapped, state.LotsExecuted));
+                        mapped, state.LotsExecuted, fills));
                 }
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
