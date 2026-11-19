@@ -22,6 +22,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
     private static readonly ConservativeQuotaGate PostGate = new(100, 8);
     private static readonly ConservativeQuotaGate CancelAndStateGate = new(70, 8);
     private static readonly ConservativeQuotaGate ReadGate = new(70, 8);
+    private static readonly ConservativeQuotaGate OperationsGate = new(120, 8);
 
     public TInvestOrdersClient(InvestApiClient client, string accountId, string instrumentUid,
         bool allowWrites = false)
@@ -123,6 +124,24 @@ public sealed class TInvestOrdersClient : IOrderGateway
         return new TInvestBuyingPower(
             response.BuyLimits?.BuyMaxLots ?? 0,
             response.SellLimits?.SellMaxLots ?? 0);
+    }
+
+    /// <summary>Cash/free securities only. Margin-selling or futures are not supported here.</summary>
+    public async Task<long> ReadFreeSellLotsAsync(int lotSize,
+        CancellationToken cancellationToken = default)
+    {
+        if (lotSize <= 0) throw new ArgumentOutOfRangeException(nameof(lotSize));
+        await OperationsGate.EnterAsync(cancellationToken);
+        var response = await _client.Operations.GetPositionsAsync(
+            new PositionsRequest { AccountId = _accountId },
+            cancellationToken: cancellationToken);
+        if (response.LimitsLoadingInProgress)
+            throw new InvalidOperationException("Broker is recalculating position limits.");
+        var matches = response.Securities.Where(x => x.InstrumentUid == _instrumentUid).ToArray();
+        if (matches.Length > 1)
+            throw new InvalidOperationException("Ambiguous securities positions in account.");
+        if (matches.Length == 0) return 0;
+        return Math.Max(0L, matches[0].Balance) / lotSize;
     }
 
     public static ManagedOrderState Map(OrderExecutionReportStatus status) => status switch
