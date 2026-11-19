@@ -11,6 +11,7 @@ public interface IOrderGateway
     Task<IReadOnlyList<TInvestOrderReport>> ReadActiveAsync(CancellationToken token = default);
     Task<TInvestBuyingPower> ReadBuyingPowerAsync(CancellationToken token = default);
     Task<long> ReadFreeSellLotsAsync(int lotSize, CancellationToken token = default);
+    Task<TInvestInventory> ReadInventoryAsync(int lotSize, CancellationToken token = default);
 }
 
 /// <summary>
