@@ -42,7 +42,7 @@ public static class QuotePlanner
         BuildSide(Side.Buy, bids, input.Settings.Buy, step, bids[0].Price,
             asks[0].Price, input.MinPrice, input.MaxPrice, input.OwnLiveOrders, result);
         BuildSide(Side.Sell, asks, input.Settings.Sell, step, bids[0].Price,
-            asks[0].Price, input.MinPrice, input.MaxPrice, result);
+            asks[0].Price, input.MinPrice, input.MaxPrice, input.OwnLiveOrders, result);
         // Both sides can target the same price in a one-tick spread.
         // The legacy combined strategy gives BUY priority.
         var buyMax = result.Where(x => x.Side == Side.Buy).Select(x => x.Price).DefaultIfEmpty(0).Max();
