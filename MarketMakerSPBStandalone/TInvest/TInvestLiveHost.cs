@@ -172,10 +172,16 @@ public sealed class TInvestLiveHost
                 {
                     var bestBid = market?.Depth.Bids.FirstOrDefault().Price ?? 0m;
                     var bestAsk = market?.Depth.Asks.FirstOrDefault().Price ?? 0m;
+                    decimal mark = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2m : 0m;
+                    string marked = mark > 0
+                        ? session.Fills.IncrementalMarkedResult(mark,
+                            _config.Risk.LotSize * _config.Risk.PointValue).ToString("0.##")
+                        : "n/a";
                     _log($"Health: {decision.Reason}; book={bestBid}/{bestAsk}; " +
                         $"orders={session.Orders.Orders.Count(x => !x.Terminal)}; " +
                         $"proposed={decision.Desired.Count}; netFillLots={session.Fills.NetLots}; " +
-                        $"brokerAudit={session.Audited}; liveArmed={armed}");
+                        $"brokerAudit={session.Audited}; liveArmed={armed}; " +
+                        $"incremental marked PnL (fees incomplete)={marked}");
                     nextDiagnostics = now.AddSeconds(5);
                 }
                 if (!armed)
