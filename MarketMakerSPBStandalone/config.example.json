@@ -28,6 +28,7 @@
   "risk": {
     "maxBuyLots": 0,
     "maxSellLots": 0,
+    "maxLongPositionLots": 0,
     "maxBuyNotional": 0,
     "maxSellNotional": 0,
     "maxBookAge": "00:00:02",
