@@ -1,0 +1,21 @@
+{
+  "ticker": "ANTperp",
+  "accountId": "",
+  "tokenEnv": "TINVEST_TOKEN",
+  "instrumentUid": "",
+  "priceType": "PRICE_TYPE_POINT",
+  "minPrice": 70,
+  "maxPrice": 90,
+  "priceStep": 1,
+  "totalLots": 320,
+  "maxPostRequestsPerSecond": 13,
+  "pollMs": 300,
+  "discoveryPollMs": 2000,
+  "bookDepth": 1,
+  "requireBook": true,
+  "liveEnabled": false,
+  "positionLimitLots": 320,
+  "allowCrossingSpread": true,
+  "journalPath": "state/launch-journal.jsonl",
+  "levels": []
+}
