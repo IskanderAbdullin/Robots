@@ -193,6 +193,27 @@ public sealed class TInvestLiveHost
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         finally
         {
+            if (armed)
+            {
+                // Best-effort graceful shutdown: cancel live quotes, never liquidate holdings.
+                // A request acceptance is NOT confirmation of cancellation.
+                try
+                {
+                    bool canCancel;
+                    lock (_snapshotLock) canCancel = _marketConnected && _orderConnected;
+                    if (canCancel)
+                    {
+                        using var shutdownDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                        var cancelCommands = await session.TickAsync(Array.Empty<Quote>(),
+                            new MarketSafety(false, true, false, false, false, false),
+                            shutdownDeadline.Token);
+                        _log("Shutdown: cancellation requests attempted=" +
+                            cancelCommands.Count(x => x.Kind == CommandKind.Cancel));
+                    }
+                    else _log("Shutdown: broker not connected; cannot cancel exchange orders.");
+                }
+                catch (Exception ex) { _log("Shutdown cancellation uncertain: " + ex.Message); }
+            }
             background.Cancel();
             try { await Task.WhenAll(marketTask, orderTask); }
             catch (OperationCanceledException) { }
