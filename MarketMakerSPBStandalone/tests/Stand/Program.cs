@@ -265,7 +265,7 @@ var lockStatePath = Path.Combine(Path.GetTempPath(), "mm-lease-" + Guid.NewGuid(
 using (var first = new InstanceLease(lockStatePath))
 {
     bool secondBlocked = false;
-    try { using var second = new InstanceLease(lockStatePath); }
+    try { using var duplicateLease = new InstanceLease(lockStatePath); }
     catch (IOException) { secondBlocked = true; }
     Check(secondBlocked, "second process cannot own the same state path");
 }
