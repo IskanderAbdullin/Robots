@@ -10,12 +10,14 @@ public sealed record MarketSnapshot(
     decimal MaxPrice = 0);
 public sealed record SafetyLimits(
     long MaxBuyLots, long MaxSellLots, decimal MaxBuyNotional,
-    decimal MaxSellNotional, TimeSpan MaxBookAge, TimeSpan MaxPortfolioAge)
+    decimal MaxSellNotional, TimeSpan MaxBookAge, TimeSpan MaxPortfolioAge,
+    int LotSize = 1, decimal PointValue = 1m)
 {
     public void Validate()
     {
         if (MaxBuyLots < 0 || MaxSellLots < 0 || MaxBuyNotional < 0 ||
-            MaxSellNotional < 0 || MaxBookAge <= TimeSpan.Zero || MaxPortfolioAge <= TimeSpan.Zero)
+            MaxSellNotional < 0 || MaxBookAge <= TimeSpan.Zero || MaxPortfolioAge <= TimeSpan.Zero ||
+            LotSize <= 0 || PointValue <= 0)
             throw new ArgumentException("Invalid risk limits.");
     }
 }
@@ -79,12 +81,13 @@ public sealed class MarketMakerController
             depth.MinPrice, depth.MaxPrice));
 
         // Notional cap is conservative for each side: apply to the full desired quote set.
-        var capped = CapNotional(plan, _limits.MaxBuyNotional, _limits.MaxSellNotional);
+        var capped = CapNotional(plan, _limits.MaxBuyNotional, _limits.MaxSellNotional,
+            _limits.LotSize * _limits.PointValue);
         return _session.Tick(capped, safety);
     }
 
     private static IReadOnlyList<Quote> CapNotional(IReadOnlyList<Quote> quotes,
-        decimal maxBuyNotional, decimal maxSellNotional)
+        decimal maxBuyNotional, decimal maxSellNotional, decimal lotMultiplier)
     {
         var result = new List<Quote>();
         decimal buySpent = 0, sellSpent = 0;
@@ -95,11 +98,11 @@ public sealed class MarketMakerController
             decimal limit = buy ? maxBuyNotional : maxSellNotional;
             decimal spent = buy ? buySpent : sellSpent;
             long eligible = limit <= spent ? 0 :
-                (long)Math.Min(quote.Lots, decimal.Floor((limit - spent) / quote.Price));
+                (long)Math.Min(quote.Lots, decimal.Floor((limit - spent) / (quote.Price * lotMultiplier)));
             if (eligible <= 0) continue;
             result.Add(quote with { Lots = eligible });
-            if (buy) buySpent += quote.Price * eligible;
-            else sellSpent += quote.Price * eligible;
+            if (buy) buySpent += quote.Price * eligible * lotMultiplier;
+            else sellSpent += quote.Price * eligible * lotMultiplier;
         }
         return result;
     }
