@@ -44,7 +44,8 @@ public sealed class TInvestLiveHost
 
         var client = InvestApiClientFactory.Create(token);
         var orders = new TInvestOrdersClient(client, _config.AccountId,
-            _config.InstrumentUid, allowWrites: armed);
+            _config.InstrumentUid, allowWrites: armed,
+            allowMarginBuys: _config.AllowMarginBuys);
         var reader = new TInvestStreamReader(client, _config.InstrumentUid,
             _config.AccountId, _config.BookDepth);
         var strategy = new StrategyEvaluator(_config.AccountId, _config.InstrumentUid,
