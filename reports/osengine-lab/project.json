@@ -279,5 +279,107 @@
   ],
   "notes": [
     "Этот JSON является начальным снимком; события разработки до подключения агентов ретроспективно не создавались."
+  ],
+  "workstreams": [
+    {
+      "id": "stakan3",
+      "title": "MarketMakerStakan3",
+      "state": "in_progress",
+      "component_ids": [
+        "stakan3"
+      ],
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerStakan3.md"
+        }
+      ]
+    },
+    {
+      "id": "standalone",
+      "title": "MarketMakerSPBStandalone",
+      "state": "in_progress",
+      "component_ids": [
+        "standalone-mm"
+      ],
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/README.md"
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "title": "AnthropicLaunchGrid",
+      "state": "in_progress",
+      "component_ids": [
+        "anthropic-grid"
+      ],
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/AnthropicLaunchGrid/README.md"
+        }
+      ]
+    },
+    {
+      "id": "liquidity",
+      "title": "Liquidity Hunter и его варианты",
+      "state": "in_progress",
+      "component_ids": [
+        "liquidity-hunter",
+        "liquidity-osengine"
+      ],
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/projects/multi-asset-liquidity-hunter/README.md"
+        }
+      ]
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "anthropic-cli",
+      "name": "AnthropicLaunchGrid CLI",
+      "kind": "cli",
+      "status": "implemented",
+      "contract_path": "AnthropicLaunchGrid/Program.cs",
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/AnthropicLaunchGrid/Program.cs"
+        }
+      ]
+    },
+    {
+      "id": "mm-host",
+      "name": "Standalone marketmaker host",
+      "kind": "cli",
+      "status": "implemented",
+      "contract_path": "MarketMakerSPBStandalone/TInvest/Host/Program.cs",
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/TInvest/Host/Program.cs"
+        }
+      ]
+    }
+  ],
+  "safety_controls": [
+    {
+      "id": "separate-components",
+      "title": "Раздельные отчёты по independent роботам",
+      "state": "documented",
+      "category": "quality_gate",
+      "description": "Не переносить результаты тестов одного компонента на другой, даже если код размещён в одном Git-репозитории",
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/README.md"
+        }
+      ]
+    }
   ]
 }
