@@ -120,4 +120,34 @@ try
 }
 finally { File.Delete(journalFile); }
 
+
+var controllerJournal = Path.Combine(Path.GetTempPath(), "mm-controller-" + Guid.NewGuid().ToString("N") + ".jsonl");
+try
+{
+    using var ps = new PaperSession(controllerJournal, new PaperBroker());
+    var controller = new MarketMakerController("paper-account", "paper-instrument",
+        new PlanSettings(1, baseBuy, baseSell),
+        new SafetyLimits(20, 20, 2000m, 2000m, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5)),
+        ps);
+    var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+    controller.Enabled = true;
+    controller.Connected = true;
+    controller.OrdersSynchronized = true;
+    controller.Market = new MarketSnapshot(book, now, true);
+    controller.Capacity = new AccountCapacity("paper-account", "paper-instrument", 20, 20, now, true);
+    var valid = controller.Tick(now);
+    Check(valid.Count == 2 && valid[0].Lots == 12 && valid[1].Lots == 9,
+        "paper controller respects confirmed capacities");
+    Check(controller.Tick(now).Count == 0, "controller idle no duplicate orders");
+    controller.Market = new MarketSnapshot(book, now.AddSeconds(-10), true);
+    var cancelled = controller.Tick(now);
+    Check(cancelled.Count == 2 && cancelled.All(x => x.Kind == CommandKind.Cancel),
+        "stale order book cancels known live quotes");
+    controller.Market = new MarketSnapshot(book, now, true);
+    controller.Capacity = controller.Capacity with { AccountId = "unexpected-account" };
+    Check(controller.Tick(now).Count == 0,
+        "account identity mismatch blocks order creation");
+}
+finally { File.Delete(controllerJournal); }
+
 Console.WriteLine($"All {checks} offline checks passed.");
