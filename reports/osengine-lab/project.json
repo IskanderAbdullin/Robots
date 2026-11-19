@@ -23,7 +23,8 @@
     "method": "repository_inspection",
     "limitations": [
       "Снимок по дереву GitHub и проектной документации; исходники не собирались и тесты в этой инвентаризации не запускались.",
-      "Результаты README/STATE считаются только документальными свидетельствами, а не новым выполнением."
+      "Результаты README/STATE считаются только документальными свидетельствами, а не новым выполнением.",
+      "Уточнён путь MarketMakerController.cs: фактически находится в Runtime/, а не Core/."
     ],
     "references": [
       {
@@ -66,12 +67,12 @@
       "description": "Самостоятельный MarketMakerSPB",
       "status": "observed_in_source",
       "paths": [
-        "MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+        "MarketMakerSPBStandalone/Runtime/MarketMakerController.cs"
       ],
       "evidence": [
         {
           "kind": "source",
-          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/Runtime/MarketMakerController.cs"
         }
       ]
     },
@@ -148,12 +149,12 @@
       "description": "Самостоятельный MarketMakerSPB",
       "status": "observed_in_source",
       "paths": [
-        "MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+        "MarketMakerSPBStandalone/Runtime/MarketMakerController.cs"
       ],
       "evidence": [
         {
           "kind": "source",
-          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/Runtime/MarketMakerController.cs"
         }
       ]
     },
