@@ -42,6 +42,8 @@ public sealed class TInvestLiveHost
         _log(armed ? "LIVE ROUTING ARMED (real-money risk)" :
             "READ-ONLY: real order commands are disabled.");
 
+        // Shared state path is a single-writer resource across processes.
+        using var instanceLease = new InstanceLease(_config.StateFile);
         var client = InvestApiClientFactory.Create(token);
         var orders = new TInvestOrdersClient(client, _config.AccountId,
             _config.InstrumentUid, allowWrites: armed,
