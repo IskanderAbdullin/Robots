@@ -18,6 +18,10 @@ public sealed class TInvestOrdersClient : IOrderGateway
     private readonly string _accountId;
     private readonly string _instrumentUid;
     private readonly bool _allowWrites;
+    // These static gates cover all instances in this process, not just one account.
+    private static readonly ConservativeQuotaGate PostGate = new(100, 8);
+    private static readonly ConservativeQuotaGate CancelAndStateGate = new(70, 8);
+    private static readonly ConservativeQuotaGate ReadGate = new(70, 8);
 
     public TInvestOrdersClient(InvestApiClient client, string accountId, string instrumentUid,
         bool allowWrites = false)
@@ -43,6 +47,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
         if (command.Kind != CommandKind.Place || command.Lots <= 0 || command.Price <= 0 ||
             !Guid.TryParse(command.ClientId, out _))
             throw new ArgumentException("Invalid order or client UUID.", nameof(command));
+        await PostGate.EnterAsync(cancellationToken);
         var response = await _client.Orders.PostOrderAsync(new PostOrderRequest
         {
             InstrumentId = _instrumentUid,
@@ -73,6 +78,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
             request.OrderId = clientId;
             request.OrderIdType = OrderIdType.Request;
         }
+        await CancelAndStateGate.EnterAsync(cancellationToken);
         await _client.Orders.CancelOrderAsync(request, cancellationToken: cancellationToken);
     }
 
@@ -88,6 +94,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
             request.OrderId = clientId;
             request.OrderIdType = OrderIdType.Request;
         }
+        await CancelAndStateGate.EnterAsync(cancellationToken);
         var response = await _client.Orders.GetOrderStateAsync(request,
             cancellationToken: cancellationToken);
         return new TInvestOrderReport(clientId, response.OrderId,
@@ -97,6 +104,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
     public async Task<IReadOnlyList<TInvestOrderReport>> ReadActiveAsync(
         CancellationToken cancellationToken = default)
     {
+        await ReadGate.EnterAsync(cancellationToken);
         var response = await _client.Orders.GetOrdersAsync(
             new GetOrdersRequest { AccountId = _accountId }, cancellationToken: cancellationToken);
         return response.Orders.Where(x => x.InstrumentUid == _instrumentUid)
@@ -107,6 +115,7 @@ public sealed class TInvestOrdersClient : IOrderGateway
     public async Task<TInvestBuyingPower> ReadBuyingPowerAsync(
         CancellationToken cancellationToken = default)
     {
+        await ReadGate.EnterAsync(cancellationToken);
         var response = await _client.Orders.GetMaxLotsAsync(new GetMaxLotsRequest
         {
             AccountId = _accountId, InstrumentId = _instrumentUid
