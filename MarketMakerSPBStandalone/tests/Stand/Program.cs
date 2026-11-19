@@ -1,4 +1,5 @@
 using MarketMakerSPBStandalone.Core;
+using MarketMakerSPBStandalone.Runtime;
 
 var checks = 0;
 void Check(bool ok, string name)
@@ -75,4 +76,48 @@ Check(cmd.Count == 1 && cmd[0].Kind == CommandKind.Place && cmd[0].Price == 98,
     "replace only after both terminal states");
 Check(rec.Reconcile(new[] { new Quote(Side.Buy, 98, 15) }, safe with { BookFresh = false }).Count == 0,
     "stale book forbids new placement");
+
+var journalFile = Path.Combine(Path.GetTempPath(), "mm-paper-" + Guid.NewGuid().ToString("N") + ".jsonl");
+var paper = new PaperBroker();
+string paperId;
+try
+{
+    using (var session = new PaperSession(journalFile, paper))
+    {
+        var placed = session.Tick(new[] { new Quote(Side.Buy, 99, 8) }, safe);
+        Check(placed.Count == 1 && placed[0].Kind == CommandKind.Place,
+            "paper placement recorded before broker acknowledgement");
+        paperId = placed[0].ClientId;
+        Check(session.Orders.Find(paperId)?.State == ManagedOrderState.Working,
+            "paper broker report updates local state");
+        session.Report(paper.Fill(paperId, 3));
+        Check(session.Orders.Find(paperId)?.FilledLots == 3,
+            "partial fill updates cumulative quantity");
+        session.Report(paper.Snapshot(paperId));
+        Check(session.Orders.Find(paperId)?.FilledLots == 3,
+            "duplicate reports cannot double fill");
+    }
+    using (var restart = new PaperSession(journalFile, paper))
+    {
+        Check(restart.Orders.Find(paperId)?.State == ManagedOrderState.Unknown,
+            "restart fails closed until broker audit");
+        Check(restart.Tick(new[] { new Quote(Side.Buy, 99, 8) }, safe).Count == 0,
+            "unknown order blocks new placements");
+        restart.Audit();
+        Check(restart.Orders.Find(paperId)?.State == ManagedOrderState.Partial,
+            "audit restores broker state");
+        var outCommands = restart.Tick(Array.Empty<Quote>(), safe);
+        Check(outCommands.Count == 1 && outCommands[0].Kind == CommandKind.Cancel &&
+            restart.Orders.Find(paperId)?.State == ManagedOrderState.Cancelled,
+            "cancel order after audit");
+    }
+    using (var restart2 = new PaperSession(journalFile, paper))
+    {
+        Check(restart2.Orders.Find(paperId)?.State == ManagedOrderState.Cancelled &&
+            restart2.Orders.Find(paperId)?.FilledLots == 3,
+            "journal replays terminal state and fills");
+    }
+}
+finally { File.Delete(journalFile); }
+
 Console.WriteLine($"All {checks} offline checks passed.");
