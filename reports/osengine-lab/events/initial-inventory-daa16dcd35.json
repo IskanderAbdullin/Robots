@@ -1,0 +1,51 @@
+{
+  "schema_version": "2.0.0",
+  "document_type": "development_event",
+  "project": {
+    "repository": "IskanderAbdullin/Robots",
+    "branch": "main"
+  },
+  "event": {
+    "id": "daa16dcd-3579-420d-a2ba-0af63dabf137",
+    "occurred_at": "2026-11-19T21:54:32.766Z",
+    "type": "review",
+    "title": "Первичная инвентаризация проекта и подключение правил Lab v2",
+    "summary": "На основе кода, структуры GitHub и документации создан проектный JSON v2; в AGENTS.md добавлена инструкция вести дальнейшие события по единой схеме. Исходный торговый код не менялся.",
+    "basis": "observed_by_agent",
+    "actor": "ChatGPT (GitHub connector)",
+    "source_commit": "daa16dcd3579d20d42ba0af63dabf1371546c917"
+  },
+  "changes": [
+    {
+      "path": "reports/osengine-lab/project.json",
+      "action": "added",
+      "summary": "Создан доказательный снимок проекта v2.",
+      "implementation_notes": "Использованы источники из GitHub; отдельно отмечена непроверенность исторических тестов."
+    },
+    {
+      "path": "AGENTS.md",
+      "action": "added",
+      "summary": "Подключены инструкции для будущих отчётов агента v2."
+    }
+  ],
+  "checks": [],
+  "issues": [],
+  "next_actions": [
+    {
+      "id": "enable-agent-module",
+      "title": "Установить универсальный модуль Lab v2 в рабочую среду Codex и проверить создание следующего события",
+      "state": "todo",
+      "priority": "high"
+    }
+  ],
+  "evidence": [
+    {
+      "kind": "commit",
+      "ref": "https://github.com/IskanderAbdullin/Robots/commit/daa16dcd3579d20d42ba0af63dabf1371546c917",
+      "source_commit": "daa16dcd3579d20d42ba0af63dabf1371546c917"
+    }
+  ],
+  "limitations": [
+    "Во время первичной инвентаризации не запускались торговые боты, интеграционные и офлайн-тесты."
+  ]
+}
