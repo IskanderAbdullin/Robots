@@ -1,0 +1,282 @@
+{
+  "schema_version": "2.0.0",
+  "document_type": "project_snapshot",
+  "project": {
+    "id": "robots",
+    "name": "Robots",
+    "repository": "IskanderAbdullin/Robots",
+    "category": "multi_project",
+    "default_branch": "main",
+    "tracked_branch": "main",
+    "source_commit": "d1d45fbcf80b09dd014f3fcb5c193961433519d4",
+    "description": "Монорепозиторий торговых роботов и экспериментальных стендов: MarketMakerStakan3, самостоятельный маркет-мейкер, сетка запуска Anthropic и несколько вариантов Liquidity Hunter.",
+    "languages": [
+      "C#"
+    ],
+    "tags": [
+      "GitHub",
+      "OsEngine Lab v2"
+    ]
+  },
+  "capture": {
+    "at": "2026-11-19T21:38:15.066Z",
+    "method": "repository_inspection",
+    "limitations": [
+      "Снимок по дереву GitHub и проектной документации; исходники не собирались и тесты в этой инвентаризации не запускались.",
+      "Результаты README/STATE считаются только документальными свидетельствами, а не новым выполнением."
+    ],
+    "references": [
+      {
+        "kind": "documentation",
+        "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerStakan3.md"
+      }
+    ]
+  },
+  "health": {
+    "stage": "development",
+    "verification": "not_run",
+    "deployment": "not_verified",
+    "summary": "Исходники и документация обнаружены; фактическую готовность к живой эксплуатации этот снимок не подтверждает."
+  },
+  "goals": [
+    "Разрабатывать независимые торговые программы с тестируемой логикой стакана",
+    "Поддерживать стенды и отдельные проекты исследования ликвидности"
+  ],
+  "components": [
+    {
+      "id": "stakan3",
+      "name": "MarketMakerStakan3 для OsEngine",
+      "kind": "software",
+      "description": "MarketMakerStakan3 для OsEngine",
+      "status": "observed_in_source",
+      "paths": [
+        "MarketMakerStakan3.cs"
+      ],
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerStakan3.cs"
+        }
+      ]
+    },
+    {
+      "id": "standalone-mm",
+      "name": "Самостоятельный MarketMakerSPB",
+      "kind": "software",
+      "description": "Самостоятельный MarketMakerSPB",
+      "status": "observed_in_source",
+      "paths": [
+        "MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+      ],
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+        }
+      ]
+    },
+    {
+      "id": "anthropic-grid",
+      "name": "Anthropic Launch Grid",
+      "kind": "software",
+      "description": "Anthropic Launch Grid",
+      "status": "observed_in_source",
+      "paths": [
+        "AnthropicLaunchGrid/Program.cs"
+      ],
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/AnthropicLaunchGrid/Program.cs"
+        }
+      ]
+    },
+    {
+      "id": "liquidity-hunter",
+      "name": "Multi-asset Liquidity Hunter",
+      "kind": "documentation",
+      "description": "Multi-asset Liquidity Hunter",
+      "status": "documented",
+      "paths": [
+        "projects/multi-asset-liquidity-hunter/README.md"
+      ],
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/projects/multi-asset-liquidity-hunter/README.md"
+        }
+      ]
+    },
+    {
+      "id": "liquidity-osengine",
+      "name": "Liquidity Hunter для OsEngine",
+      "kind": "documentation",
+      "description": "Liquidity Hunter для OsEngine",
+      "status": "documented",
+      "paths": [
+        "projects/liquidity-hunter-osengine/README.md"
+      ],
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/projects/liquidity-hunter-osengine/README.md"
+        }
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "stakan3",
+      "name": "MarketMakerStakan3 для OsEngine",
+      "kind": "capability",
+      "description": "MarketMakerStakan3 для OsEngine",
+      "status": "observed_in_source",
+      "paths": [
+        "MarketMakerStakan3.cs"
+      ],
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerStakan3.cs"
+        }
+      ]
+    },
+    {
+      "id": "standalone-mm",
+      "name": "Самостоятельный MarketMakerSPB",
+      "kind": "capability",
+      "description": "Самостоятельный MarketMakerSPB",
+      "status": "observed_in_source",
+      "paths": [
+        "MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+      ],
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/Core/MarketMakerController.cs"
+        }
+      ]
+    },
+    {
+      "id": "anthropic-grid",
+      "name": "Anthropic Launch Grid",
+      "kind": "capability",
+      "description": "Anthropic Launch Grid",
+      "status": "observed_in_source",
+      "paths": [
+        "AnthropicLaunchGrid/Program.cs"
+      ],
+      "evidence": [
+        {
+          "kind": "source",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/AnthropicLaunchGrid/Program.cs"
+        }
+      ]
+    }
+  ],
+  "requirements": [],
+  "checks": [],
+  "risks": [
+    {
+      "id": "risk-1",
+      "title": "Несколько самостоятельных программ в одной ветке: статус и тесты необходимо вести раздельно по component_id.",
+      "severity": "medium",
+      "state": "open",
+      "detail": "Необходима отдельная проверка",
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerStakan3.md"
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "capture-tests",
+      "title": "Запустить и документировать проверки для актуального кода по JSON-схеме v2",
+      "priority": "high",
+      "state": "todo",
+      "detail": "Сохранить фактическую команду, код возврата, SHA исходников и проверяемые логи",
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerStakan3.md"
+        }
+      ]
+    }
+  ],
+  "milestones": [],
+  "decisions": [],
+  "dependencies": [],
+  "artifacts": [
+    {
+      "id": "doc-1",
+      "name": "MarketMakerStakan3.md",
+      "kind": "documentation",
+      "path": "MarketMakerStakan3.md",
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerStakan3.md"
+        }
+      ]
+    },
+    {
+      "id": "doc-2",
+      "name": "MarketMakerSPBStandalone/README.md",
+      "kind": "documentation",
+      "path": "MarketMakerSPBStandalone/README.md",
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/MarketMakerSPBStandalone/README.md"
+        }
+      ]
+    },
+    {
+      "id": "doc-3",
+      "name": "AnthropicLaunchGrid/README.md",
+      "kind": "documentation",
+      "path": "AnthropicLaunchGrid/README.md",
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/AnthropicLaunchGrid/README.md"
+        }
+      ]
+    },
+    {
+      "id": "doc-4",
+      "name": "projects/multi-asset-liquidity-hunter/README.md",
+      "kind": "documentation",
+      "path": "projects/multi-asset-liquidity-hunter/README.md",
+      "evidence": [
+        {
+          "kind": "documentation",
+          "ref": "https://github.com/IskanderAbdullin/Robots/blob/d1d45fbcf80b09dd014f3fcb5c193961433519d4/projects/multi-asset-liquidity-hunter/README.md"
+        }
+      ]
+    }
+  ],
+  "timeline": [
+    {
+      "title": "Первичная инвентаризация по GitHub",
+      "date": "2026-11-19",
+      "kind": "review",
+      "commit": "d1d45fbcf80b09dd014f3fcb5c193961433519d4",
+      "evidence": [
+        {
+          "kind": "commit",
+          "ref": "https://github.com/IskanderAbdullin/Robots/commit/d1d45fbcf80b09dd014f3fcb5c193961433519d4"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "На каком SHA есть независимо воспроизводимый прогон соответствующих тестов?"
+  ],
+  "notes": [
+    "Этот JSON является начальным снимком; события разработки до подключения агентов ретроспективно не создавались."
+  ]
+}
