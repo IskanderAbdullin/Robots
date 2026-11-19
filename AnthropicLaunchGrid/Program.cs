@@ -16,11 +16,11 @@ public sealed class Settings
     public string InstrumentUid { get; set; } = "";
     public string PriceType { get; set; } = "PRICE_TYPE_POINT";
     public decimal MinPrice { get; set; } = 70m;
-    public decimal MaxPrice { get; set; } = 90m;
+    public decimal MaxPrice { get; set; } = 95m;
     public decimal PriceStep { get; set; } = 1m;
-    public int TotalLots { get; set; } = 320;
+    public int TotalLots { get; set; } = 395;
     public int MaxPostRequestsPerSecond { get; set; } = 13;
-    public int PositionLimitLots { get; set; } = 320;
+    public int PositionLimitLots { get; set; } = 395;
     public int PollMs { get; set; } = 300;
     public int DiscoveryPollMs { get; set; } = 2000;
     public int BookDepth { get; set; } = 1;
@@ -248,8 +248,8 @@ public static class Runner
     {
         var c=new Settings();
         var levels=Grid.Build(c);
-        if(levels.Count!=21 || levels.Sum(x=>x.Lots)!=320 || levels[0]!=new Level(70,16) ||
-           levels[4]!=new Level(74,16) || levels[5]!=new Level(75,15) || levels[^1]!=new Level(90,15))
+        if(levels.Count!=26 || levels.Sum(x=>x.Lots)!=395 || levels[0]!=new Level(70,16) ||
+           levels[4]!=new Level(74,16) || levels[5]!=new Level(75,15) || levels[^1]!=new Level(95,15))
             throw new Exception("Grid test failed");
         c.Levels=[new Level(70,100),new Level(75,100)];
         if(Grid.Build(c).Count!=2) throw new Exception("Custom levels test failed");
