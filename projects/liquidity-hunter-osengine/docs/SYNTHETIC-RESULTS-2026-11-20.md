@@ -55,3 +55,11 @@ All six Python unittest cases passed. The full local benchmark and result JSON f
 python3 projects/liquidity-hunter-osengine/tests/synthetic/smoke.py
 ```
 This is a portable dependency-free smoke suite; the exhaustive locally executed harness may be downloaded separately as a reproducibility artifact. Do not confuse it with an OS Engine native tester.
+
+
+## Additional abstract order-FSM regression (14 local invariants total)
+Eight further local unit tests of a standalone abstract order-state model passed:
+partial fill during pending cancel; complete fill before cancel acknowledgment; duplicated cumulative fill does not double count; cumulative fill rollback rejected; overfill rejected; submit-timeout reconciliation; reconciliation rollback rejected; second cancellation before acknowledgment rejected. See [order_fsm_tests.py](../tests/synthetic/order_fsm_tests.py).
+
+**Boundary:** this proves properties of the small reference state machine, NOT actual OS Engine/Broker order-state reconciliation. A production adapter should reproduce these same cases in a contract/integration test.
+OS robot entry TTL handling is now present (request cancel on expired active open order), commit fa986ca. This is not confirmed cancel-state reconciliation.
