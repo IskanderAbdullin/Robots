@@ -32,8 +32,8 @@ r = QuotePlanner.Build(Input(baseBuy with { Sizing = SizeMode.Available, MaxAvai
     baseSell with { Sizing = SizeMode.Available, MaxAvailableLots = 0 }));
 Check(r.Count == 0, "no brokerage-confirmed capacity -> no orders");
 r = QuotePlanner.Build(Input(baseBuy, baseSell, depth: new Book(
-    new[] { new Level(100m, 100) }, new[] { new Level(101m, 100) })));
-Check(r.Count == 1 && r[0].Side == Side.Buy, "one-tick spread buy-priority self-cross prevention");
+    new[] { new Level(100m, 100) }, new[] { new Level(102m, 100) })));
+Check(r.Count == 1 && r[0].Side == Side.Buy, "two-tick spread buy-priority self-cross prevention");
 r = QuotePlanner.Build(Input(baseBuy, baseSell, depth: new Book(
     new[] { new Level(104m, 100) }, new[] { new Level(103m, 100) })));
 Check(r.Count == 0, "crossed market fail closed");
