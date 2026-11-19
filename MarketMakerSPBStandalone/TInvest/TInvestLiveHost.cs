@@ -127,10 +127,12 @@ public sealed class TInvestLiveHost
                         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
                         deadline.CancelAfter(TimeSpan.FromSeconds(5));
                         var power = await orders.ReadBuyingPowerAsync(deadline.Token);
-                        if (power.BuyLots < 0 || power.SellLots < 0)
+                        long freeSellLots = await orders.ReadFreeSellLotsAsync(_config.Risk.LotSize, deadline.Token);
+                        if (power.BuyLots < 0 || power.SellLots < 0 || freeSellLots < 0)
                             throw new InvalidOperationException("Negative broker limits.");
                         capacity = new AccountCapacity(_config.AccountId, _config.InstrumentUid,
-                            power.BuyLots, power.SellLots, DateTimeOffset.UtcNow, true);
+                            power.BuyLots, Math.Min(power.SellLots, freeSellLots),
+                            DateTimeOffset.UtcNow, true);
                         lock (_snapshotLock) _capacity = capacity;
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
