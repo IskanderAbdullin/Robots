@@ -1,0 +1,39 @@
+{
+  "schema_version": "2.0.0",
+  "document_type": "development_event",
+  "project": {
+    "repository": "IskanderAbdullin/Robots",
+    "branch": "main"
+  },
+  "event": {
+    "id": "f48781b5-24f4-4fc6-a1b2-a97c46796347",
+    "occurred_at": "2026-11-19T22:03:57.189Z",
+    "type": "review",
+    "title": "Уточнение универсального JSON-снимка проекта v2",
+    "summary": "Разделены самостоятельные направления, уточнён путь Runtime/MarketMakerController.cs",
+    "basis": "observed_by_agent",
+    "actor": "ChatGPT (GitHub connector)",
+    "source_commit": "f48781b524f44fc6f1b2a97c46796347044d083a"
+  },
+  "changes": [
+    {
+      "path": "reports/osengine-lab/project.json",
+      "action": "modified",
+      "summary": "Разделены самостоятельные направления, уточнён путь Runtime/MarketMakerController.cs",
+      "implementation_notes": "Уточнены проверенные пути, workstreams и границы достоверности; код проекта не изменён."
+    }
+  ],
+  "checks": [],
+  "issues": [],
+  "next_actions": [],
+  "evidence": [
+    {
+      "kind": "commit",
+      "ref": "https://github.com/IskanderAbdullin/Robots/commit/f48781b524f44fc6f1b2a97c46796347044d083a",
+      "source_commit": "f48781b524f44fc6f1b2a97c46796347044d083a"
+    }
+  ],
+  "limitations": [
+    "Не означает новый запуск тестов или изменение торговой системы."
+  ]
+}
