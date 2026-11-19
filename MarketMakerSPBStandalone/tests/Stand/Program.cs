@@ -22,6 +22,15 @@ var own = new[] { new Quote(Side.Buy, 99, 80), new Quote(Side.Sell, 103, 80) };
 r = QuotePlanner.Build(Input(baseBuy, baseSell, own));
 Check(r.Count == 2 && r[0].Price == 99 && r[0].Lots == 12 &&
     r[1].Price == 103, "subtract own liquidity before target choice");
+
+var alreadyAtTarget = new[]
+{
+    new Quote(Side.Buy, 99, 20), new Quote(Side.Sell, 103, 20)
+};
+r = QuotePlanner.Build(Input(baseBuy, baseSell, alreadyAtTarget));
+Check(r.Count == 2 && r[0].Price == 99 && r[1].Price == 103,
+    "existing quote at qualifying target stays at its price, no self-chase");
+
 var pctBuy = baseBuy with { Placement = PlacementMode.PercentageLadder, Percent = 50, FixedLots = 200 };
 var pctSell = baseSell with { Placement = PlacementMode.PercentageLadder, Percent = 50, FixedLots = 200 };
 r = QuotePlanner.Build(Input(pctBuy, pctSell));
