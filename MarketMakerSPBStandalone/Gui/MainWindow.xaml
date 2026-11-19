@@ -1,0 +1,40 @@
+<Window x:Class="MarketMakerSPBStandalone.Gui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Market Maker SPB — standalone" Height="620" Width="970"
+        MinHeight="430" MinWidth="650" WindowStartupLocation="CenterScreen"
+        Background="#141A22" Foreground="#E8EDF4">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Grid.Row="0" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,14"
+               Text="Market Maker SPB"/>
+    <DockPanel Grid.Row="1" Margin="0,0,0,10">
+      <Button x:Name="BrowseButton" DockPanel.Dock="Right" Padding="12,8"
+              Click="Browse_Click" Content="Выбрать конфигурацию" Margin="10,0,0,0"/>
+      <TextBox x:Name="ConfigPath" Padding="8" VerticalContentAlignment="Center"
+               Background="#263241" Foreground="White"
+               Text="config.json"/>
+    </DockPanel>
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,12">
+      <Button x:Name="ReadOnlyStart" Padding="16,10" Margin="0,0,8,0"
+              Click="StartReadOnly_Click" Content="Запуск: только чтение"/>
+      <Button x:Name="LiveStart" Padding="16,10" Margin="0,0,8,0"
+              Click="StartLive_Click" Content="Запуск реальной торговли"/>
+      <Button x:Name="StopButton" Padding="16,10" IsEnabled="False"
+              Click="Stop_Click" Content="Остановить"/>
+    </StackPanel>
+    <TextBox x:Name="LogBox" Grid.Row="3" FontFamily="Consolas" FontSize="12"
+             TextWrapping="Wrap" IsReadOnly="True"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+             AcceptsReturn="True" Background="#0E151D" Foreground="#D7E8F6"
+             BorderBrush="#344254" Padding="12"/>
+    <TextBlock Grid.Row="4" x:Name="Status" Margin="0,10,0,0" Foreground="#B9C9D8"
+               Text="Остановлен · по умолчанию торговля выключена"/>
+  </Grid>
+</Window>
