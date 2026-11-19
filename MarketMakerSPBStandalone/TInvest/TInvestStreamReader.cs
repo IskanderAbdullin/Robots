@@ -6,7 +6,8 @@ using Tinkoff.InvestApi.V1;
 namespace MarketMakerSPBStandalone.TInvest;
 
 public sealed record TInvestMarketEvent(Book? Depth, bool? LimitOrdersAllowed,
-    DateTimeOffset ReceivedAt, bool StreamConnected);
+    DateTimeOffset ReceivedAt, bool StreamConnected,
+    decimal MinPrice = 0, decimal MaxPrice = 0);
 /// <summary>
 /// Two independent read-only gRPC streams. Reconnects do not imply authorization to trade;
 /// the owner must separately audit all broker orders and refresh capacity snapshots.
@@ -73,7 +74,9 @@ public sealed class TInvestStreamReader
                             var book = new Book(
                                 ob.Bids.Select(x => new Level(TInvestDataClient.ToDecimal(x.Price), x.Quantity)).ToArray(),
                                 ob.Asks.Select(x => new Level(TInvestDataClient.ToDecimal(x.Price), x.Quantity)).ToArray());
-                            onEvent(new TInvestMarketEvent(book, null, now, true));
+                            onEvent(new TInvestMarketEvent(book, null, now, true,
+                                TInvestDataClient.ToDecimal(ob.LimitDown),
+                                TInvestDataClient.ToDecimal(ob.LimitUp)));
                             break;
                         case MarketDataResponse.PayloadOneofCase.TradingStatus:
                             var status = message.TradingStatus;
