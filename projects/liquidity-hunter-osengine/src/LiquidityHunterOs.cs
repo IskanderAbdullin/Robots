@@ -24,12 +24,15 @@ namespace OsEngine.Robots
         private readonly StrategyParameterDecimal _maxAskImbalance;
         private readonly StrategyParameterDecimal _budgetPerInstrument;
         private readonly StrategyParameterDecimal _profitBps;
+        private readonly StrategyParameterDecimal _roundTripCostBps;
+        private readonly StrategyParameterDecimal _maxJumpBps;
         private readonly StrategyParameterDecimal _stopBps;
         private readonly StrategyParameterInt _entryTicksBelowBid;
         private readonly StrategyParameterInt _maxEntryAgeSec;
         private readonly Thread _worker;
         private volatile bool _disposed;
         private readonly Dictionary<string, DateTime> _lastEntryAttempt = new Dictionary<string, DateTime>();
+        private readonly Dictionary<string, decimal> _previousMid = new Dictionary<string, decimal>();
         private readonly object _lock = new object();
 
         public LiquidityHunterOs(string name, StartProgram startProgram) : base(name, startProgram)
@@ -44,6 +47,8 @@ namespace OsEngine.Robots
             _maxAskImbalance = CreateParameter("Max imbalance", -0.10m, -1m, 1m, 0.05m, "Signal");
             _budgetPerInstrument = CreateParameter("Budget per instrument", 10000m, 100m, 10000000m, 100m, "Risk");
             _profitBps = CreateParameter("Profit target bps", 50m, 1m, 5000m, 1m, "Exit");
+            _roundTripCostBps = CreateParameter("Expected roundtrip cost bps", 16m, 0m, 500m, 1m, "Risk");
+            _maxJumpBps = CreateParameter("Max one-observation jump bps", 50m, 1m, 5000m, 1m, "Signal");
             _stopBps = CreateParameter("Risk stop bps", 100m, 1m, 5000m, 1m, "Exit");
             _entryTicksBelowBid = CreateParameter("Entry ticks below bid", 0, 0, 20, 1, "Signal");
             _maxEntryAgeSec = CreateParameter("Entry TTL seconds", 30, 1, 3600, 1, "Risk");
@@ -92,7 +97,8 @@ namespace OsEngine.Robots
                 return;
             }
 
-            if (_regime.ValueString != "On" || _screener.PositionsOpenAll.Count >= _maxPositions.ValueInt)
+            if (_regime.ValueString != "On" || StartProgram == StartProgram.IsOsTrader ||
+                _screener.PositionsOpenAll.Count >= _maxPositions.ValueInt)
                 return;
 
             MarketDepth source = tab.MarketDepth;
@@ -106,7 +112,18 @@ namespace OsEngine.Robots
             decimal lot = tab.Security.Lot;
             if (bid <= 0m || ask <= bid || step <= 0m || lot <= 0m) return;
             decimal spread = 20000m * (ask - bid) / (ask + bid);
-            if (spread < _minSpreadBps.ValueDecimal) return;
+            if (spread < _minSpreadBps.ValueDecimal || _profitBps.ValueDecimal <= _roundTripCostBps.ValueDecimal) return;
+            // Snapshot-to-snapshot jumps are a warning; use tester history to calibrate threshold.
+            string priceKey = tab.Security.Name;
+            decimal mid = (bid + ask) / 2m;
+            lock (_lock)
+            {
+                decimal previous;
+                _previousMid.TryGetValue(priceKey, out previous);
+                _previousMid[priceKey] = mid;
+                if (previous <= 0m || 10000m * Math.Abs(mid - previous) / previous > _maxJumpBps.ValueDecimal)
+                    return;
+            }
             decimal bidQty = 0, askQty = 0;
             int top = Math.Min(5, Math.Min(depth.Bids.Count, depth.Asks.Count));
             for (int i = 0; i < top; i++)
@@ -140,21 +157,27 @@ namespace OsEngine.Robots
         private void ManagePosition(BotTabSimple tab, Position position)
         {
             if (position == null || position.OpenVolume <= 0m) return;
-            // Only manage confirmed position volume. Do not submit a second close while one is active.
+            // Stop must take priority even when a resting profit-close order is active.
+            decimal riskPrice = position.EntryPrice * (1m - _stopBps.ValueDecimal / 10000m);
+            if (position.EntryPrice > 0m && tab.PriceBestBid > 0m &&
+                (tab.PriceBestBid <= riskPrice || position.SignalTypeClose == "Stop"))
+            {
+                position.SignalTypeClose = "Stop";
+                if (position.CloseActive)
+                {
+                    tab.CloseAllOrderToPosition(position);
+                    return; // Wait for cancellation confirmation; never double-sell.
+                }
+                tab.CloseAtMarket(position, position.OpenVolume);
+                return;
+            }
+            // Only manage confirmed volume and never duplicate an active close.
             if (position.CloseActive) return;
             decimal step = tab.Security.PriceStep;
             if (step <= 0m || position.EntryPrice <= 0m) return;
             decimal entry = position.EntryPrice;
             decimal profitPrice = RoundUpToTick(entry * (1m + _profitBps.ValueDecimal / 10000m), step);
-            decimal stopTrigger = entry * (1m - _stopBps.ValueDecimal / 10000m);
-            if (tab.PriceBestBid > 0m && tab.PriceBestBid <= stopTrigger)
-            {
-                tab.CloseAtMarket(position, position.OpenVolume);
-            }
-            else
-            {
-                tab.CloseAtLimit(position, profitPrice, position.OpenVolume);
-            }
+            tab.CloseAtLimit(position, profitPrice, position.OpenVolume);
         }
 
         private static decimal RoundUpToTick(decimal price, decimal step)
