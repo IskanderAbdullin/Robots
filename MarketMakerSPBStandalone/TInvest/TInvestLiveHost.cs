@@ -143,6 +143,16 @@ public sealed class TInvestLiveHost
                     nextCapacity = now.AddSeconds(3);
                 }
 
+                // After a terminal fill/cancel, require a fresh exchange book before
+                // any replacement. Otherwise the previous self quote may still be
+                // visible in the snapshot and provoke a pointless reprice.
+                if (armed && connected && market != null &&
+                    market.Timestamp <= session.LastTerminalReportUtc)
+                {
+                    await Task.Delay(100, stop);
+                    continue;
+                }
+
                 var decision = strategy.Evaluate(DateTimeOffset.UtcNow,
                     enabled: armed, connected: connected,
                     ordersSynced: session.Audited && !auditRequested,
