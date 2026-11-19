@@ -87,7 +87,8 @@ public sealed class OrderReconciler
                     x.Price == order.Price).Sum(x => x.Outstanding);
                 var invalid = !safety.CanCreate || target == 0 || sameSide > target;
                 // Never cancel an unchanged useful quote merely to move it in a pro-rata book.
-                if (invalid && order.State is ManagedOrderState.Working or ManagedOrderState.Partial)
+                if (invalid && safety.Connected &&
+                    order.State is (ManagedOrderState.Working or ManagedOrderState.Partial))
                 {
                     order.Apply(ManagedOrderState.CancelPending, order.FilledLots);
                     commands.Add(new OrderCommand(CommandKind.Cancel, order.ClientId, order.Side, order.Price, 0));
