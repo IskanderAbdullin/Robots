@@ -31,3 +31,23 @@ jobs:
         run: dotnet run --project MarketMakerSPBStandalone/App/App.csproj -c Release -- --demo
       - name: Offline deterministic stand
         run: dotnet run --project MarketMakerSPBStandalone/tests/Stand/Stand.csproj -c Release
+  windows-gui:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Compile Windows WPF GUI
+        run: dotnet build MarketMakerSPBStandalone/Gui/Gui.csproj -c Release --nologo -warnaserror
+      - name: Publish Windows standalone GUI
+        if: contains(github.event.head_commit.message, '[gui-release]')
+        run: dotnet publish MarketMakerSPBStandalone/Gui/Gui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o GuiRelease
+      - name: Upload Windows GUI release
+        if: contains(github.event.head_commit.message, '[gui-release]')
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarketMakerSPBStandalone-win-x64
+          path: GuiRelease/**
+          retention-days: 7
