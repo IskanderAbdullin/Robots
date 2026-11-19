@@ -15,4 +15,5 @@ var allocated=CapitalOptimizer.Allocate(new[]{c!,c! with {Symbol="OTHER"}},
     new BudgetSettings(1000m,0.2m,2,0.1m));
 Require(allocated.Count==2&&allocated.Sum(x=>x.Committed)<=900m,"budget");
 Require(allocated.All(x=>x.Committed<=200m),"symbol cap");
+ReplayChecks.Run();
 Console.WriteLine("PASS: advanced gating, price search, budget caps");
