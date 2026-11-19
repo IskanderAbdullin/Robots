@@ -17,7 +17,7 @@ def run(seed,symbols,ticks,filtered,fee_bps):
         for t in range(ticks):
             market=rng.gauss(0,5)
             for i in range(symbols):
-                now=t*symbols+i
+                now=t
                 drift=-4 if regime=="downtrend" else 4 if regime=="uptrend" else 0
                 jump=-70 if regime=="flash_crash" and 70<=t<80 else 0
                 if regime=="correlated_crash" and 110<=t<130:jump=-24
@@ -37,7 +37,7 @@ def run(seed,symbols,ticks,filtered,fee_bps):
                 if filtered and (qty+askqty<25 or (previous is not None and abs(last_mid[i]-previous)>30)
                     or spread*10000//max(1,last_mid[i]) < fee_bps):continue
                 e.place(f"X{i}",bid,3,now,qty//2)
-        e.finish(ticks*symbols+20)
+        e.finish(ticks+20)
         assert e.committed()==0
         assert e.stats.max_committed<=p.max_budget and e.stats.max_positions<=p.max_positions
         out.append({"regime":regime,"pnl_cents":round(e.stats.realized_pnl,3),
