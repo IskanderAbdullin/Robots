@@ -24,6 +24,7 @@ public sealed class DurableBrokerSession : IDisposable
     private readonly Dictionary<string, string> _exchangeIds = new(StringComparer.Ordinal);
     public OrderReconciler Orders { get; }
     public bool Audited { get; private set; }
+    public DateTimeOffset LastTerminalReportUtc { get; private set; } = DateTimeOffset.MinValue;
     /// <summary>Must be called on every transport disconnect/reconnect before new quotes.</summary>
     public void RequireAudit() => Audited = false;
 
@@ -81,8 +82,11 @@ public sealed class DurableBrokerSession : IDisposable
     {
         if (!string.IsNullOrWhiteSpace(report.ExchangeId))
             _exchangeIds[report.ClientId] = report.ExchangeId;
+        bool wasTerminal = Orders.Find(report.ClientId)?.Terminal == true;
         _journal.RecordReport(report.ClientId, report.State, report.FilledLots);
         Orders.OnBrokerReport(report.ClientId, report.State, report.FilledLots);
+        if (!wasTerminal && Orders.Find(report.ClientId)?.Terminal == true)
+            LastTerminalReportUtc = DateTimeOffset.UtcNow;
     }
 
     public async Task<IReadOnlyList<OrderCommand>> TickAsync(
