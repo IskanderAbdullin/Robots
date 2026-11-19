@@ -13,6 +13,7 @@ public sealed class LiveBotSettings
     public int BookDepth { get; set; } = 20;
     public bool Enabled { get; set; } = false;
     public bool AllowLiveWrites { get; set; } = false;
+    public bool AllowMarginBuys { get; set; } = false;
     public string LiveAcknowledgement { get; set; } = "";
     public decimal PriceStep { get; set; } = 0.01m;
     public SideSettings Buy { get; set; } = new(
