@@ -45,6 +45,9 @@ public sealed class TInvestLiveHost
         // Shared state path is a single-writer resource across processes.
         using var instanceLease = new InstanceLease(_config.StateFile);
         var client = InvestApiClientFactory.Create(token);
+        // Fail before opening streams or sending any order if the instrument differs.
+        await TInvestDataClient.ValidateInstrumentAsync(client, _config.InstrumentUid,
+            _config.PriceStep, _config.Risk.LotSize, stop);
         var orders = new TInvestOrdersClient(client, _config.AccountId,
             _config.InstrumentUid, allowWrites: armed,
             allowMarginBuys: _config.AllowMarginBuys);
