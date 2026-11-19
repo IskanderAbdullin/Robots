@@ -1,0 +1,20 @@
+name: ANTperp launch grid checks
+on:
+  push:
+    paths: ['AnthropicLaunchGrid/**', '.github/workflows/anthropic-launch-grid.yml']
+  pull_request:
+    paths: ['AnthropicLaunchGrid/**', '.github/workflows/anthropic-launch-grid.yml']
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: AnthropicLaunchGrid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build AnthropicLaunchGrid.csproj -c Release
+      - run: dotnet run --project AnthropicLaunchGrid.csproj -- self-test
+      - run: cp config.example.json config.json && dotnet run --project AnthropicLaunchGrid.csproj -- plan config.json
