@@ -95,7 +95,8 @@ public sealed class TInvestStreamReader
     }
 
     public async Task OrderLoopAsync(Action<TInvestOrderReport> onOrder,
-        Action<bool> onConnection, CancellationToken stop)
+        Action<bool> onConnection, Action<DateTimeOffset> onHeartbeat,
+        CancellationToken stop)
     {
         int failures = 0;
         while (!stop.IsCancellationRequested)
@@ -110,6 +111,10 @@ public sealed class TInvestStreamReader
                 bool announced = false;
                 await foreach (var message in stream.ResponseStream.ReadAllAsync(stop))
                 {
+                    onHeartbeat(DateTimeOffset.UtcNow);
+                    if (message.PayloadCase == OrderStateStreamResponse.PayloadOneofCase.Subscription &&
+                        message.Subscription.Status != ResultSubscriptionStatus.Ok)
+                        throw new InvalidOperationException("Order stream subscription refused.");
                     if (!announced)
                     {
                         // Every reconnect invalidates previous account/order snapshots.
