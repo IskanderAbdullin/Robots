@@ -46,4 +46,33 @@ try
     throw new Exception("Invalid input silently accepted");
 }
 catch (ArgumentOutOfRangeException) { Check(true, "invalid config rejected"); }
-Console.WriteLine($"All {checks} planning checks passed.");
+
+var rec = new OrderReconciler();
+var safe = new MarketSafety(true, true, true, true, true, true);
+var cmd = rec.Reconcile(new[] { new Quote(Side.Buy, 99, 10) }, safe);
+Check(cmd.Count == 1 && cmd[0].Kind == CommandKind.Place && cmd[0].Lots == 10,
+    "initial placement");
+Check(rec.Reconcile(new[] { new Quote(Side.Buy, 99, 10) }, safe).Count == 0,
+    "pending placement is idempotent");
+var id = cmd[0].ClientId;
+rec.OnBrokerReport(id, ManagedOrderState.Working, 0);
+cmd = rec.Reconcile(new[] { new Quote(Side.Buy, 99, 15) }, safe);
+Check(cmd.Count == 1 && cmd[0].Kind == CommandKind.Place && cmd[0].Lots == 5,
+    "increase size without cancelling queue");
+var second = cmd[0].ClientId;
+rec.OnBrokerReport(second, ManagedOrderState.Working, 0);
+cmd = rec.Reconcile(new[] { new Quote(Side.Buy, 98, 15) }, safe);
+Check(cmd.Count == 2 && cmd.All(x => x.Kind == CommandKind.Cancel),
+    "move starts with cancellations");
+Check(rec.Reconcile(new[] { new Quote(Side.Buy, 98, 15) }, safe).Count == 0,
+    "cancel in-flight blocks replacement");
+rec.OnBrokerReport(id, ManagedOrderState.Cancelled, 0);
+Check(rec.Reconcile(new[] { new Quote(Side.Buy, 98, 15) }, safe).Count == 0,
+    "remaining cancellation blocks replacement");
+rec.OnBrokerReport(second, ManagedOrderState.Cancelled, 0);
+cmd = rec.Reconcile(new[] { new Quote(Side.Buy, 98, 15) }, safe);
+Check(cmd.Count == 1 && cmd[0].Kind == CommandKind.Place && cmd[0].Price == 98,
+    "replace only after both terminal states");
+Check(rec.Reconcile(new[] { new Quote(Side.Buy, 98, 15) }, safe with { BookFresh = false }).Count == 0,
+    "stale book forbids new placement");
+Console.WriteLine($"All {checks} offline checks passed.");
