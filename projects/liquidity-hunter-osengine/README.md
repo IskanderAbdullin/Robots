@@ -9,4 +9,12 @@ Independent OS Engine `BotPanel` robot (C#) for multi-symbol `BotTabScreener`. U
 5. Set limits, spread, fees and target. Note fee costs are **not automatically inferred** and simple signal is a baseline, not statistically calibrated.
 
 ## Safety caveats
-This is an initial historical-testable implementation, not ready for live execution. Position creation/close mechanics and partial fills depend on OS Engine version and tester settings. Entry TTL only throttles repeat attempts, it does NOT cancel outstanding orders; exit placement is a simplistic limit/stop baseline and can remain stale. Active close orders need explicit cancellation/reconciliation before stop overrides. A global portfolio budget and session-regime risk engine are not implemented. Keep live mode Off until these blockers are resolved.
+This is an initial historical-testable implementation, not ready for live execution. Position creation/close mechanics and partial fills depend on OS Engine version and tester settings. Entry TTL now also requests cancellation of expired active opening orders (not yet fully broker-reconciled); exit placement is a simplistic limit/stop baseline and can remain stale. Active close orders need explicit cancellation/reconciliation before stop overrides. A global portfolio budget and session-regime risk engine are not implemented. Keep live mode Off until these blockers are resolved.
+
+
+## Synthetic test evidence (2026-11-20)
+Portable deterministic Python regression: [tests/synthetic/smoke.py](tests/synthetic/smoke.py).
+Detailed three-seed local research and breakdown: [Synthetic results](docs/SYNTHETIC-RESULTS-2026-11-20.md).
+The filter strategy remained unprofitable on synthetic scenarios; do not use backtest P&L as a profitability claim.
+The current version blocks new entries in live OsTrader (historical testing only) and keeps managing confirmed positions when entry mode is Off.
+The tester-side entry cancellation and stop/cancel races require real OS Engine integration verification.
