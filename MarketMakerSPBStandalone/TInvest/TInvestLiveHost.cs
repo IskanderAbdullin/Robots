@@ -176,6 +176,13 @@ public sealed class TInvestLiveHost
                         $"brokerAudit={session.Audited}; liveArmed={armed}");
                     nextDiagnostics = now.AddSeconds(5);
                 }
+                if (!armed)
+                {
+                    // The read-only mode NEVER even constructs a write request:
+                    // older journal orders are inspected, but not cancelled or replaced.
+                    await Task.Delay(100, stop);
+                    continue;
+                }
                 try
                 {
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
