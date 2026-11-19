@@ -4,8 +4,11 @@ using Tinkoff.InvestApi.V1;
 
 namespace MarketMakerSPBStandalone.TInvest;
 
+public sealed record TInvestFill(string TradeId, decimal Price, long Lots,
+    DateTimeOffset TimeUtc);
 public sealed record TInvestOrderReport(
-    string ClientId, string ExchangeId, ManagedOrderState State, long FilledLots);
+    string ClientId, string ExchangeId, ManagedOrderState State, long FilledLots,
+    IReadOnlyList<TInvestFill>? Fills = null);
 public sealed record TInvestBuyingPower(long BuyLots, long SellLots);
 
 /// <summary>
@@ -100,8 +103,11 @@ public sealed class TInvestOrdersClient : IOrderGateway
         await CancelAndStateGate.EnterAsync(cancellationToken);
         var response = await _client.Orders.GetOrderStateAsync(request,
             cancellationToken: cancellationToken);
+        var fills = response.Stages.Select(stage => new TInvestFill(
+            stage.TradeId, TInvestDataClient.ToDecimal(stage.Price), stage.Quantity,
+            stage.ExecutionTime?.ToDateTimeOffset() ?? DateTimeOffset.MinValue)).ToArray();
         return new TInvestOrderReport(clientId, response.OrderId,
-            Map(response.ExecutionReportStatus), response.LotsExecuted);
+            Map(response.ExecutionReportStatus), response.LotsExecuted, fills);
     }
 
     public async Task<IReadOnlyList<TInvestOrderReport>> ReadActiveAsync(
