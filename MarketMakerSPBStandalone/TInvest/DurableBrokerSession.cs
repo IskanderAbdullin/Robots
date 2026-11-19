@@ -22,6 +22,8 @@ public sealed class DurableBrokerSession : IDisposable
     private readonly IOrderGateway _broker;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Runtime.DurableOrderJournal _journal;
+    private readonly DurableFillLedger _fills;
+    public FillLedger Fills => _fills.State;
     private readonly Dictionary<string, string> _exchangeIds = new(StringComparer.Ordinal);
     public OrderReconciler Orders { get; }
     public bool Audited { get; private set; }
@@ -33,6 +35,7 @@ public sealed class DurableBrokerSession : IDisposable
     {
         _broker = broker;
         Orders = Runtime.DurableOrderJournal.Recover(journalPath);
+        _fills = new DurableFillLedger(journalPath + ".trades.jsonl");
         _journal = new Runtime.DurableOrderJournal(journalPath);
     }
 
@@ -83,7 +86,15 @@ public sealed class DurableBrokerSession : IDisposable
     {
         if (!string.IsNullOrWhiteSpace(report.ExchangeId))
             _exchangeIds[report.ClientId] = report.ExchangeId;
-        bool wasTerminal = Orders.Find(report.ClientId)?.Terminal == true;
+        var tracked = Orders.Find(report.ClientId) ??
+            throw new InvalidOperationException("Unknown own order in report.");
+        bool wasTerminal = tracked.Terminal;
+        // Trade IDs are fsynced before terminal order status, so a crash cannot
+        // make completed fills disappear from restart accounting.
+        if (report.Fills != null)
+            foreach (var fill in report.Fills)
+                _fills.Record(new ExecutedFill(report.ClientId, fill.TradeId,
+                    tracked.Side, fill.Price, fill.Lots, fill.TimeUtc));
         _journal.RecordReport(report.ClientId, report.State, report.FilledLots);
         Orders.OnBrokerReport(report.ClientId, report.State, report.FilledLots);
         if (!wasTerminal && Orders.Find(report.ClientId)?.Terminal == true)
@@ -134,6 +145,7 @@ public sealed class DurableBrokerSession : IDisposable
     public void Dispose()
     {
         _journal.Dispose();
+        _fills.Dispose();
         _gate.Dispose();
     }
 }
