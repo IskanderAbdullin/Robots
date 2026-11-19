@@ -6,6 +6,7 @@
   "bookDepth": 20,
   "enabled": false,
   "allowLiveWrites": false,
+  "allowMarginBuys": false,
   "liveAcknowledgement": "",
   "priceStep": 0.01,
   "buy": {
