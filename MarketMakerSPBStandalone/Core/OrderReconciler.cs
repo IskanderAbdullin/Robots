@@ -51,6 +51,25 @@ public sealed class OrderReconciler
         order.Apply(state, cumulativeFilled);
     }
 
+    /// <summary>On ambiguous transport errors, block until authoritative broker audit.</summary>
+    public void MarkUnknown(string id)
+    {
+        if (!_orders.TryGetValue(id, out var order))
+            throw new InvalidOperationException("Unknown local order: " + id);
+        if (!order.Terminal) order.Apply(ManagedOrderState.Unknown, order.FilledLots);
+    }
+
+    /// <summary>Reload a durable order intent in UNKNOWN state pending broker reconciliation.</summary>
+    public void RestoreUnknown(string id, Side side, decimal price, long lots, long filledLots = 0)
+    {
+        if (string.IsNullOrWhiteSpace(id) || price <= 0 || lots <= 0 || filledLots < 0 || filledLots > lots)
+            throw new ArgumentOutOfRangeException(nameof(id));
+        if (_orders.ContainsKey(id)) throw new InvalidOperationException("Duplicate order id.");
+        var order = new ManagedOrder { ClientId = id, Side = side, Price = price, Lots = lots };
+        order.Apply(ManagedOrderState.Unknown, filledLots);
+        _orders.Add(id, order);
+    }
+
     public IReadOnlyList<OrderCommand> Reconcile(
         IReadOnlyList<Quote> desired, MarketSafety safety)
     {
