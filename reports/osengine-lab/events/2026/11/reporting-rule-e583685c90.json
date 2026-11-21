@@ -1,0 +1,45 @@
+{
+  "schema_version": "2.0.0",
+  "document_type": "development_event",
+  "project": {
+    "repository": "IskanderAbdullin/Robots",
+    "branch": "codex/marketmaker-stakan3-teststand"
+  },
+  "event": {
+    "id": "e583685c-90d1-45e5-a434-76dfd808ccb2",
+    "occurred_at": "2026-11-21T09:57:19.461Z",
+    "type": "maintenance",
+    "title": "Подключено правило OsEngine Lab v2 в активной рабочей ветке",
+    "summary": "В AGENTS.md рабочей ветки добавлена единая инструкция JSON-отчётности; прежние ограничения OsEngine и торговых операций не изменены. Это настройка агента, а не установка модуля в его окружение.",
+    "basis": "observed_by_agent",
+    "actor": "ChatGPT GitHub connector",
+    "source_commit": "e583685c90d175e5443476dfd808ccb2656262b7"
+  },
+  "changes": [
+    {
+      "path": "AGENTS.md",
+      "action": "modified",
+      "summary": "Дополнен раздел обязательных JSON-событий OsEngine Lab v2 в данной ветке"
+    }
+  ],
+  "checks": [],
+  "issues": [],
+  "next_actions": [
+    {
+      "id": "verify-agent-runtime",
+      "title": "При следующей задаче убедиться, что агент видит модуль и записывает новое событие",
+      "state": "todo",
+      "priority": "medium"
+    }
+  ],
+  "evidence": [
+    {
+      "kind": "commit",
+      "ref": "https://github.com/IskanderAbdullin/Robots/commit/e583685c90d175e5443476dfd808ccb2656262b7",
+      "source_commit": "e583685c90d175e5443476dfd808ccb2656262b7"
+    }
+  ],
+  "limitations": [
+    "Python-модуль не устанавливался в среду Codex; в этой операции тестовые прогоны не выполнялись."
+  ]
+}
